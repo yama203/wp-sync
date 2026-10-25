@@ -2,3 +2,4 @@ node_modules/
 wp-sync.zip
 .DS_Store
 wp-sync/zz-*
+wp-sync-*.zip
