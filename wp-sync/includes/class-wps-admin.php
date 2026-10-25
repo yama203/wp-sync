@@ -37,8 +37,8 @@ class WPS_Admin {
 	}
 
 	public static function assets() {
-		wp_enqueue_style( 'wps-admin', WPS_URL . 'assets/admin.css', array(), WPS_VERSION );
-		wp_enqueue_script( 'wps-admin', WPS_URL . 'assets/admin.js', array(), WPS_VERSION, true );
+		wp_enqueue_style( 'wps-admin', WPS_URL . 'assets/admin.css', array(), WPS_VERSION . '.' . filemtime( WPS_DIR . 'assets/admin.css' ) );
+		wp_enqueue_script( 'wps-admin', WPS_URL . 'assets/admin.js', array(), WPS_VERSION . '.' . filemtime( WPS_DIR . 'assets/admin.js' ), true );
 		wp_localize_script(
 			'wps-admin',
 			'wpsAdmin',
@@ -47,6 +47,7 @@ class WPS_Admin {
 				'nonce'     => wp_create_nonce( 'wps_ajax' ),
 				'connected' => (bool) WPS_Settings::remote(),
 				'login'     => wp_login_url( self::url() ),
+				'version'   => WPS_VERSION,
 			)
 		);
 	}
@@ -61,14 +62,14 @@ class WPS_Admin {
 	public static function save_permissions() {
 		self::check_post( 'wps_permissions' );
 		WPS_Settings::save_permissions( ! empty( $_POST['allow_pull'] ), ! empty( $_POST['allow_push'] ) );
-		wp_safe_redirect( self::url( array( 'wps_notice' => 'saved' ) ) );
+		wp_safe_redirect( self::url( array( 'wps_notice' => 'saved', 'tab' => 'settings' ) ) );
 		exit;
 	}
 
 	public static function regenerate() {
 		self::check_post( 'wps_regenerate' );
 		WPS_Settings::regenerate_secret();
-		wp_safe_redirect( self::url( array( 'wps_notice' => 'regenerated' ) ) );
+		wp_safe_redirect( self::url( array( 'wps_notice' => 'regenerated', 'tab' => 'settings' ) ) );
 		exit;
 	}
 
@@ -169,6 +170,7 @@ class WPS_Admin {
 				'backup'     => $backup( $remote ),
 			),
 			'local'  => array(
+				'name'   => $local['name'],
 				'home'   => $local['home'],
 				'prefix' => $local['prefix'],
 				'size'   => $size( $local ),
@@ -220,15 +222,21 @@ class WPS_Admin {
 
 	public static function render() {
 		$notice  = isset( $_GET['wps_notice'] ) ? sanitize_key( $_GET['wps_notice'] ) : ''; // phpcs:ignore
+		$tab     = isset( $_GET['tab'] ) && 'settings' === $_GET['tab'] ? 'settings' : 'sync'; // phpcs:ignore
 		$notices = array(
 			'saved'        => '許可の設定を保存しました。',
 			'regenerated'  => '接続キーを作り直しました。接続先に新しいキーを貼り直してください。',
 			'disconnected' => '接続を解除しました。',
 		);
 		$remote = WPS_Settings::remote();
+		$post   = esc_url( admin_url( 'admin-post.php' ) );
 		?>
 		<div class="wrap wps">
-			<h1>WP Sync</h1>
+			<div class="wps-header">
+				<h1>WP Sync <span class="wps-version"><?php echo esc_html( WPS_VERSION ); ?></span></h1>
+				<p class="wps-lead">ローカルと本番の間で、データベースとメディアを同期します。</p>
+			</div>
+
 			<?php if ( isset( $notices[ $notice ] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( $notices[ $notice ] ); ?></p></div>
 			<?php endif; ?>
@@ -236,109 +244,189 @@ class WPS_Admin {
 				<div class="notice notice-warning"><p>マルチサイトにはまだ対応していません。</p></div>
 			<?php endif; ?>
 
-			<div class="wps-card">
-				<h2>同期</h2>
-				<div id="wps-connect" <?php echo $remote ? 'hidden' : ''; ?>>
-					<p>接続先のサイトの「ツール → WP Sync」にある接続キーを貼り付けてください。</p>
-					<p><textarea id="wps-key" class="large-text code" rows="3" placeholder="wps1:..."></textarea></p>
-					<details>
-						<summary>接続する URL を変える（任意）</summary>
-						<p class="description">接続キーに入っている URL とは別の URL でつなぐときだけ入れます（例：Docker の中から別のローカル環境につなぐときの <code>http://host.docker.internal:10899</code>）。</p>
-						<p><input type="url" id="wps-url" class="regular-text code" placeholder="https://example.com"></p>
-					</details>
-					<p><button type="button" class="button button-primary" id="wps-connect-button">接続する</button></p>
-				</div>
+			<nav class="nav-tab-wrapper wps-tabs">
+				<a href="<?php echo esc_url( self::url() ); ?>" class="nav-tab <?php echo 'sync' === $tab ? 'nav-tab-active' : ''; ?>" data-tab="sync">同期</a>
+				<a href="<?php echo esc_url( self::url( array( 'tab' => 'settings' ) ) ); ?>" class="nav-tab <?php echo 'settings' === $tab ? 'nav-tab-active' : ''; ?>" data-tab="settings">このサイトの設定</a>
+			</nav>
 
-				<div id="wps-remote" <?php echo $remote ? '' : 'hidden'; ?>>
-					<p class="wps-remote-head">
-						接続先: <strong id="wps-remote-home"><?php echo $remote ? esc_html( $remote['home'] ) : ''; ?></strong>
-						<span id="wps-remote-meta" class="description"></span>
-					</p>
-					<div id="wps-remote-warning"></div>
+			<div class="wps-panel" data-panel="sync" <?php echo 'sync' === $tab ? '' : 'hidden'; ?>>
 
-					<fieldset class="wps-direction">
-						<label><input type="radio" name="wps-direction" value="pull" checked> <strong>Pull</strong>（接続先 → このサイト）</label>
-						<label><input type="radio" name="wps-direction" value="push"> <strong>Push</strong>（このサイト → 接続先）</label>
-					</fieldset>
+				<?php if ( ! $remote ) : ?>
+					<section class="wps-card" id="wps-connect">
+						<h2 class="wps-card-title">接続先につなぐ</h2>
+						<ol class="wps-steps">
+							<li>接続先のサイトに WP Sync を入れ、「ツール → WP Sync → このサイトの設定」で接続キーをコピーします。</li>
+							<li>下に貼り付けて「接続する」を押します。</li>
+						</ol>
+						<textarea id="wps-key" class="large-text code wps-key" rows="3" placeholder="wps1:..."></textarea>
+						<details class="wps-details">
+							<summary>接続する URL を変える（任意）</summary>
+							<div class="wps-details-body">
+								<p class="description">接続キーに入っている URL とは別の URL でつなぐときだけ入れます（例：Docker の中から別のローカル環境につなぐときの <code>http://host.docker.internal:10899</code>）。</p>
+								<input type="url" id="wps-url" class="regular-text code" placeholder="https://example.com">
+							</div>
+						</details>
+						<div class="wps-actions">
+							<button type="button" class="button button-primary button-large" id="wps-connect-button">接続する</button>
+						</div>
+					</section>
+				<?php else : ?>
+					<section class="wps-card">
+						<div class="wps-direction" role="radiogroup" aria-label="同期の向き">
+							<label class="wps-seg">
+								<input type="radio" name="wps-direction" value="pull" checked>
+								<span><strong>Pull</strong>接続先から取り込む</span>
+							</label>
+							<label class="wps-seg">
+								<input type="radio" name="wps-direction" value="push">
+								<span><strong>Push</strong>接続先へ送る</span>
+							</label>
+						</div>
 
-					<fieldset class="wps-what">
-						<label><input type="checkbox" id="wps-db" checked> データベース</label>
-						<label class="wps-indent"><input type="checkbox" id="wps-keep-active" checked> 有効化しているプラグインの設定は送らない（送り先で有効なプラグインをそのまま残す）</label>
-						<label><input type="checkbox" id="wps-media" checked> メディア（uploads）</label>
-						<label class="wps-indent"><input type="checkbox" id="wps-media-delete"> 送り元にないメディアを送り先から消す</label>
-					</fieldset>
+						<div class="wps-sites" id="wps-sites">
+							<div class="wps-site" id="wps-site-local">
+								<span class="wps-role"></span>
+								<span class="wps-site-kind">このサイト</span>
+								<strong class="wps-site-name"><?php echo esc_html( get_option( 'blogname' ) ); ?></strong>
+								<span class="wps-site-url"><?php echo esc_html( untrailingslashit( get_option( 'home' ) ) ); ?></span>
+								<span class="wps-site-meta"></span>
+							</div>
+							<div class="wps-flow" aria-hidden="true"><span class="dashicons dashicons-arrow-left-alt"></span></div>
+							<div class="wps-site" id="wps-site-remote">
+								<span class="wps-role"></span>
+								<span class="wps-site-kind">接続先</span>
+								<strong class="wps-site-name">読み込み中…</strong>
+								<span class="wps-site-url"><?php echo esc_html( $remote['home'] ); ?></span>
+								<span class="wps-site-meta"></span>
+							</div>
+						</div>
+						<div id="wps-remote-warning"></div>
+					</section>
 
-					<div class="wps-pairs">
-						<h3>置換</h3>
-						<p class="description">送り先に合わせて、DB の中の URL とパスを置き換えます（serialize された値も壊さずに直します）。</p>
-						<table class="widefat striped">
-							<thead><tr><th>置き換える前</th><th></th><th>置き換えた後</th><th></th></tr></thead>
-							<tbody id="wps-pairs-auto"></tbody>
-							<tbody id="wps-pairs-extra"></tbody>
-						</table>
-						<p><button type="button" class="button" id="wps-add-pair">置換を足す</button></p>
-					</div>
+					<section class="wps-card">
+						<h2 class="wps-card-title">送るもの</h2>
+						<div class="wps-options">
+							<label class="wps-option">
+								<input type="checkbox" id="wps-db" checked>
+								<span><strong>データベース</strong><span class="wps-option-desc">投稿・固定ページ・設定・ユーザーなど。URL とパスは送り先に合わせて置き換えます。</span></span>
+							</label>
+							<label class="wps-option wps-option-sub">
+								<input type="checkbox" id="wps-keep-active" checked>
+								<span><strong>有効化しているプラグインの設定は送らない</strong><span class="wps-option-desc">送り先で有効なプラグインをそのまま残します。</span></span>
+							</label>
+							<label class="wps-option">
+								<input type="checkbox" id="wps-media" checked>
+								<span><strong>メディア</strong><span class="wps-option-desc">uploads フォルダのうち、大きさか更新日時が違うファイルだけを送ります。</span></span>
+							</label>
+							<label class="wps-option wps-option-sub">
+								<input type="checkbox" id="wps-media-delete">
+								<span><strong>送り元にないメディアを送り先から消す</strong></span>
+							</label>
+						</div>
 
-					<p class="wps-start">
-						<button type="button" class="button button-primary button-hero" id="wps-start">Pull を始める</button>
-					</p>
+						<details class="wps-details wps-pairs">
+							<summary>URL とパスの置換 <span class="wps-count" id="wps-pairs-count"></span></summary>
+							<div class="wps-details-body">
+								<p class="description">serialize された値や、ブロックの JSON の中の URL も壊さずに置き換えます。ほかに置き換えたいものがあれば足してください。</p>
+								<table class="wps-table">
+									<thead><tr><th>置き換える前</th><th class="wps-arrow-col"></th><th>置き換えた後</th><th class="wps-tag-col"></th></tr></thead>
+									<tbody id="wps-pairs-auto"></tbody>
+									<tbody id="wps-pairs-extra"></tbody>
+								</table>
+								<button type="button" class="button button-small" id="wps-add-pair"><span class="dashicons dashicons-plus-alt2"></span> 置換を足す</button>
+							</div>
+						</details>
 
-					<div id="wps-progress" hidden>
-						<p class="wps-progress-label"><strong id="wps-progress-label"></strong> <span id="wps-progress-detail" class="description"></span></p>
+						<div class="wps-run">
+							<p class="wps-summary" id="wps-summary"></p>
+							<button type="button" class="button button-primary button-hero" id="wps-start">Pull を始める</button>
+						</div>
+					</section>
+
+					<section class="wps-card" id="wps-progress" hidden>
+						<div class="wps-progress-head">
+							<strong id="wps-progress-label"></strong>
+							<span id="wps-progress-percent" class="wps-percent"></span>
+						</div>
 						<div class="wps-bar"><div class="wps-bar-fill" id="wps-bar-fill"></div></div>
-						<ol id="wps-log" class="wps-log"></ol>
+						<p id="wps-progress-detail" class="wps-progress-detail"></p>
+						<div id="wps-result"></div>
+						<details class="wps-details" open>
+							<summary>記録</summary>
+							<ol id="wps-log" class="wps-log"></ol>
+						</details>
+					</section>
+
+					<section class="wps-card" id="wps-backups">
+						<h2 class="wps-card-title">元に戻す</h2>
+						<p class="description">DB を取り込むと、取り込む前の DB を 1 回分だけ残します。次に取り込むと、その前のものに置き換わります（メディアは戻りません）。</p>
+						<div class="wps-backup-list">
+							<div class="wps-backup">
+								<span class="wps-backup-site">このサイト</span>
+								<span class="wps-backup-info" id="wps-backup-local">—</span>
+								<button type="button" class="button" data-restore="local" disabled>元に戻す</button>
+							</div>
+							<div class="wps-backup">
+								<span class="wps-backup-site">接続先</span>
+								<span class="wps-backup-info" id="wps-backup-remote">—</span>
+								<button type="button" class="button" data-restore="remote" disabled>元に戻す</button>
+							</div>
+						</div>
+					</section>
+				<?php endif; ?>
+			</div>
+
+			<div class="wps-panel" data-panel="settings" <?php echo 'settings' === $tab ? '' : 'hidden'; ?>>
+				<section class="wps-card">
+					<h2 class="wps-card-title">接続キー</h2>
+					<p>相手のサイトの WP Sync にこのキーを貼り付けると、このサイトにつながります。</p>
+					<div class="wps-key-row">
+						<textarea class="large-text code wps-key" rows="3" readonly id="wps-own-key"><?php echo esc_textarea( WPS_Settings::connection_key() ); ?></textarea>
+						<button type="button" class="button" id="wps-copy-key"><span class="dashicons dashicons-admin-page"></span> コピー</button>
 					</div>
+					<p class="wps-caution"><span class="dashicons dashicons-lock"></span> このキーを知っている人は、下で許可した操作ができます。人に見せないでください。</p>
+				</section>
 
-					<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="wps-disconnect">
-						<?php wp_nonce_field( 'wps_disconnect' ); ?>
-						<input type="hidden" name="action" value="wps_disconnect">
-						<button type="submit" class="button-link">接続を解除する</button>
+				<section class="wps-card">
+					<h2 class="wps-card-title">相手に許可する操作</h2>
+					<form method="post" action="<?php echo $post; // phpcs:ignore ?>">
+						<?php wp_nonce_field( 'wps_permissions' ); ?>
+						<input type="hidden" name="action" value="wps_permissions">
+						<div class="wps-options">
+							<label class="wps-option">
+								<input type="checkbox" name="allow_pull" value="1" <?php checked( WPS_Settings::allow_pull() ); ?>>
+								<span><strong>このサイトから pull するのを許可する</strong><span class="wps-option-desc">相手がこのサイトの DB とメディアを読み出せます。</span></span>
+							</label>
+							<label class="wps-option">
+								<input type="checkbox" name="allow_push" value="1" <?php checked( WPS_Settings::allow_push() ); ?>>
+								<span><strong>このサイトへ push するのを許可する</strong><span class="wps-option-desc">相手がこのサイトの DB とメディアを上書きできます。本番では、push するときだけオンにするのが安全です。</span></span>
+							</label>
+						</div>
+						<div class="wps-actions"><button type="submit" class="button button-primary">保存</button></div>
 					</form>
-				</div>
-			</div>
+				</section>
 
-			<div class="wps-card" id="wps-backups" <?php echo $remote ? '' : 'hidden'; ?>>
-				<h2>元に戻す</h2>
-				<p class="description">DB を取り込むと、取り込む前の DB を 1 回分だけ残しています。次に取り込むと、その前のものに置き換わります（メディアは戻りません）。</p>
-				<table class="widefat striped">
-					<tbody>
-						<tr>
-							<th>このサイト</th>
-							<td id="wps-backup-local">—</td>
-							<td><button type="button" class="button" data-restore="local" disabled>元に戻す</button></td>
-						</tr>
-						<tr>
-							<th>接続先</th>
-							<td id="wps-backup-remote">—</td>
-							<td><button type="button" class="button" data-restore="remote" disabled>元に戻す</button></td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
-
-			<div class="wps-card">
-				<h2>このサイトの接続キー</h2>
-				<p>このサイトとつなぐときは、相手のサイトの WP Sync にこのキーを貼り付けます。<strong>このキーを知っている人は、下で許可した操作ができます。</strong>人に見せないでください。</p>
-				<p><textarea class="large-text code" rows="3" readonly id="wps-own-key"><?php echo esc_textarea( WPS_Settings::connection_key() ); ?></textarea></p>
-				<p>
-					<button type="button" class="button" id="wps-copy-key">コピー</button>
-				</p>
-
-				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
-					<?php wp_nonce_field( 'wps_permissions' ); ?>
-					<input type="hidden" name="action" value="wps_permissions">
-					<fieldset>
-						<label><input type="checkbox" name="allow_pull" value="1" <?php checked( WPS_Settings::allow_pull() ); ?>> 相手がこのサイトから pull するのを許可する（DB とメディアを読み出せる）</label><br>
-						<label><input type="checkbox" name="allow_push" value="1" <?php checked( WPS_Settings::allow_push() ); ?>> 相手がこのサイトへ push するのを許可する（DB とメディアを上書きできる）</label>
-					</fieldset>
-					<p><button type="submit" class="button">保存</button></p>
-				</form>
-
-				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" onsubmit="return confirm('接続キーを作り直すと、今のキーではつなげなくなります。よろしいですか？');">
-					<?php wp_nonce_field( 'wps_regenerate' ); ?>
-					<input type="hidden" name="action" value="wps_regenerate">
-					<button type="submit" class="button-link button-link-delete">接続キーを作り直す</button>
-				</form>
+				<section class="wps-card wps-card-quiet">
+					<h2 class="wps-card-title">接続の管理</h2>
+					<?php if ( $remote ) : ?>
+						<div class="wps-manage-row">
+							<span>接続先: <strong><?php echo esc_html( $remote['home'] ); ?></strong><?php echo $remote['url'] !== $remote['home'] ? '（接続 URL: ' . esc_html( $remote['url'] ) . '）' : ''; ?></span>
+							<form method="post" action="<?php echo $post; // phpcs:ignore ?>">
+								<?php wp_nonce_field( 'wps_disconnect' ); ?>
+								<input type="hidden" name="action" value="wps_disconnect">
+								<button type="submit" class="button">接続を解除する</button>
+							</form>
+						</div>
+					<?php endif; ?>
+					<div class="wps-manage-row">
+						<span>接続キーを作り直すと、今のキーでつないでいる相手はつながらなくなります。</span>
+						<form method="post" action="<?php echo $post; // phpcs:ignore ?>" onsubmit="return confirm('接続キーを作り直すと、今のキーではつなげなくなります。よろしいですか？');">
+							<?php wp_nonce_field( 'wps_regenerate' ); ?>
+							<input type="hidden" name="action" value="wps_regenerate">
+							<button type="submit" class="button button-link-delete wps-danger">接続キーを作り直す</button>
+						</form>
+					</div>
+				</section>
 			</div>
 		</div>
 		<?php
