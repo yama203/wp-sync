@@ -1,0 +1,87 @@
+.wps-card {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 4px 20px 16px;
+	margin: 16px 0;
+	max-width: 960px;
+}
+
+.wps-remote-head {
+	font-size: 14px;
+}
+
+.wps-remote-head .description {
+	display: block;
+	margin-top: 4px;
+}
+
+.wps-direction,
+.wps-what {
+	margin: 16px 0;
+}
+
+.wps-direction label,
+.wps-what label {
+	display: block;
+	margin: 6px 0;
+	font-size: 14px;
+}
+
+.wps-indent {
+	margin-left: 24px !important;
+}
+
+.wps-pairs table td.code {
+	font-family: Consolas, Monaco, monospace;
+	word-break: break-all;
+}
+
+.wps-pairs input.regular-text {
+	width: 100%;
+}
+
+.wps-bar {
+	height: 12px;
+	background: #f0f0f1;
+	border-radius: 6px;
+	overflow: hidden;
+}
+
+.wps-bar-fill {
+	height: 100%;
+	width: 0;
+	background: #2271b1;
+	transition: width 0.3s;
+}
+
+.wps-bar-fill.is-done {
+	background: #00a32a;
+}
+
+.wps-bar-fill.is-error {
+	background: #d63638;
+}
+
+.wps-log {
+	max-height: 260px;
+	overflow: auto;
+	background: #f6f7f7;
+	padding: 8px 8px 8px 32px;
+	font-size: 12px;
+}
+
+.wps-log .is-error {
+	color: #d63638;
+	font-weight: 600;
+}
+
+.wps-log .is-warning {
+	color: #996800;
+	font-weight: 600;
+}
+
+.wps-disconnect {
+	margin-top: 16px;
+	text-align: right;
+}

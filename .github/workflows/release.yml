@@ -1,0 +1,50 @@
+# v0.2.0 のようなタグを push すると、Release を作って wp-sync-{版}.zip を添付する。
+# 各サイトの WP Sync はこの Release を見て、WordPress の「更新」に出す。
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: バージョンを読む
+        id: version
+        run: |
+          header=$(sed -n 's/^ \* Version: *//p' wp-sync/wp-sync.php | head -1 | tr -d '\r ')
+          constant=$(sed -n "s/^define( 'WPS_VERSION', '\(.*\)' );/\1/p" wp-sync/wp-sync.php | head -1)
+          echo "version=$header" >> "$GITHUB_OUTPUT"
+          echo "WP Sync $header（WPS_VERSION $constant）"
+          if [ "$header" != "$constant" ]; then
+            echo "ヘッダーの Version（$header）と WPS_VERSION（$constant）が違います。" >&2
+            exit 1
+          fi
+
+      - name: タグとバージョンが合っているか
+        run: |
+          if [ "${GITHUB_REF_NAME#v}" != "${{ steps.version.outputs.version }}" ]; then
+            echo "タグ（$GITHUB_REF_NAME）と wp-sync.php の Version（${{ steps.version.outputs.version }}）が違います。" >&2
+            exit 1
+          fi
+
+      - name: ZIP を作る
+        run: |
+          mkdir dist
+          zip -rq "dist/wp-sync-${{ steps.version.outputs.version }}.zip" wp-sync -x '*.DS_Store' 'wp-sync/zz-*'
+          ls -la dist
+
+      - name: Release を作る
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.zip \
+            --title "WP Sync ${{ steps.version.outputs.version }}" \
+            --generate-notes

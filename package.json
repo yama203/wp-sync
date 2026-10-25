@@ -1,0 +1,13 @@
+{
+  "name": "wp-sync",
+  "private": true,
+  "scripts": {
+    "start": "npx wp-env start",
+    "stop": "npx wp-env stop",
+    "zip": "rm -f wp-sync.zip && zip -rq wp-sync.zip wp-sync -x '*.DS_Store' 'wp-sync/zz-*'",
+    "release": "bash scripts/release.sh"
+  },
+  "devDependencies": {
+    "@wordpress/env": "^10.34.0"
+  }
+}
