@@ -7,6 +7,8 @@
 	};
 	var info = null;
 	var running = false;
+	// 動いている（止まった）同期の ID。止まったら、これで続きから再開する。
+	var jobId = null;
 	// 選んだテーマ・プラグイン（向きごと）。null はまだ初期値を決めていない。
 	var selected = { pull: null, push: null };
 	var ROOTS = { themes: 'テーマ', plugins: 'プラグイン' };
@@ -400,13 +402,30 @@
 		setRunning( false );
 		$( 'wps-bar-fill' ).classList.add( 'is-error' );
 		log( 'エラー: ' + err.message, 'is-error' );
-		notice( $( 'wps-result' ), '途中で止まりました：' + err.message + '　DB は入れ替える前なら元のままです。もう一度始めると最初からやり直します。' );
+		if ( ! jobId ) {
+			notice( $( 'wps-result' ), '途中で止まりました：' + err.message + '　DB は入れ替える前なら元のままです。もう一度始めると最初からやり直します。' );
+			return;
+		}
+		var box = notice( $( 'wps-result' ), '途中で止まりました：' + err.message + '　DB は入れ替える前なら元のままです。止まったところから再開できます（もう一度始めると最初からやり直します）。' );
+		var again = el( 'button', { type: 'button', class: 'button button-primary' }, '続きから再開' );
+		again.addEventListener( 'click', resume );
+		box.appendChild( el( 'p' ) ).appendChild( again );
+	}
+
+	function resume() {
+		notice( $( 'wps-result' ), '' );
+		$( 'wps-bar-fill' ).classList.remove( 'is-error' );
+		setRunning( true );
+		log( '続きから再開します。' );
+		step( jobId ).catch( fail );
 	}
 
 	function step( id ) {
+		jobId = id;
 		return request( 'step', { id: id } ).then( function ( status ) {
 			show( status );
 			if ( status.done ) {
+				jobId = null;
 				finish( status );
 				return;
 			}
@@ -443,6 +462,7 @@
 		$( 'wps-progress-percent' ).textContent = '';
 		progress.scrollIntoView( { behavior: 'smooth', block: 'start' } );
 		setRunning( true );
+		jobId = null;
 
 		request( 'start', {
 			direction: direction(),

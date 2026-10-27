@@ -77,6 +77,20 @@ class WPS_Local_Endpoint extends WPS_Endpoint {
 	}
 }
 
+/**
+ * やり直せるかもしれない通信の失敗。
+ */
+class WPS_Retry_Exception extends Exception {
+
+	/** @var bool 要求が接続先に届いていない（どの操作でもやり直してよい）。 */
+	public $unsent;
+
+	public function __construct( $message, $unsent ) {
+		parent::__construct( $message );
+		$this->unsent = $unsent;
+	}
+}
+
 class WPS_Remote_Endpoint extends WPS_Endpoint {
 
 	private $url;
@@ -91,7 +105,35 @@ class WPS_Remote_Endpoint extends WPS_Endpoint {
 		return true;
 	}
 
+	/** 何度も送ってよい操作（同じ要求をもう一度送っても結果が変わらない）。 */
+	const REPEATABLE = array( 'info', 'export_chunk', 'files_list', 'files_get', 'files_put', 'files_delete' );
+
+	/** つながらなかったときに待つ秒数。この回数だけやり直す。 */
+	const RETRY_WAITS = array( 3, 10, 20, 30 );
+
+	/**
+	 * 接続先の操作を呼ぶ。つながらなかったときは、少し待ってやり直す。
+	 *
+	 * メディアが多いと要求が何千回にもなり、サーバー（Xserver など）が一時的に接続を受け付けないことがあるため（sanagochi.jp で、
+	 * 5256 件中 68 件目で「cURL error 28: Connection timed out after 10003 milliseconds」。0.4.3）。
+	 * 要求が届く前に失敗したとき（接続できない・混んでいる）はどの操作もやり直す。届いた後の失敗（応答待ちの時間切れなど）は、
+	 * DB の取り込みのように 2 回入ると困る操作ではやり直さない。
+	 */
 	public function call( $action, $args = array() ) {
+		$waits = self::RETRY_WAITS;
+		while ( true ) {
+			try {
+				return $this->send( $action, $args );
+			} catch ( WPS_Retry_Exception $e ) {
+				if ( ! $waits || ( ! $e->unsent && ! in_array( $action, self::REPEATABLE, true ) ) ) {
+					throw new Exception( $e->getMessage() );
+				}
+				sleep( array_shift( $waits ) );
+			}
+		}
+	}
+
+	private function send( $action, $args ) {
 		$body = WPS_Transport::pack(
 			array(
 				'action' => $action,
@@ -119,10 +161,17 @@ class WPS_Remote_Endpoint extends WPS_Endpoint {
 		);
 
 		if ( is_wp_error( $response ) ) {
-			throw new Exception( '接続先につながりませんでした: ' . $response->get_error_message() );
+			$message = $response->get_error_message();
+			// 名前が引けない・接続できない・接続の時間切れ・TLS の接続に失敗は、要求が届いていない。
+			$unsent = (bool) preg_match( '/cURL error (6|7|35):|Connection timed out|Failed to connect|Could not resolve|Connection refused/i', $message );
+			throw new WPS_Retry_Exception( '接続先につながりませんでした: ' . $message, $unsent );
 		}
 
 		$code = (int) wp_remote_retrieve_response_code( $response );
+		if ( in_array( $code, array( 429, 502, 503, 504 ), true ) && ! wp_remote_retrieve_header( $response, 'x-wps-signature' ) ) {
+			// 混んでいる・前のサーバーが受け付けなかった（WP Sync まで届いていない）。
+			throw new WPS_Retry_Exception( sprintf( '接続先が混んでいて応答しませんでした（HTTP %d）。', $code ), 429 === $code || 503 === $code );
+		}
 		if ( $code >= 300 && $code < 400 ) {
 			throw new Exception( '接続先の URL が転送されています（' . wp_remote_retrieve_header( $response, 'location' ) . '）。転送先の URL を接続 URL に設定してください。' );
 		}

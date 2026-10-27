@@ -384,7 +384,12 @@ class WPS_Job {
 			if ( 'done' === $stage ) {
 				break;
 			}
-			$this->run( $stage, $src, $dst );
+			try {
+				$this->run( $stage, $src, $dst );
+			} catch ( Throwable $e ) {
+				$this->on_error( $stage );
+				throw $e;
+			}
 			$this->save();
 		} while ( microtime( true ) < $deadline && 'db_finalize' !== $this->stage() );
 
@@ -392,6 +397,22 @@ class WPS_Job {
 			@unlink( self::file( $this->data['id'] ) ); // phpcs:ignore
 		}
 		return $this->status();
+	}
+
+	/**
+	 * 止まったときに、続きから再開できる状態にして残す（止まった回の分は保存していないので、その前の状態から再開する）。
+	 *
+	 * DB のテーブルの途中で止まったときは、そのテーブルを最初から送り直す。要求が届いた後に応答を待てずに止まったときは、
+	 * その分の行が入っているかどうか分からないため（最初のチャンクで一時テーブルを作り直すので、2 回入らない）。
+	 */
+	private function on_error( $stage ) {
+		$saved = self::load( $this->data['id'] )->data;
+		if ( 'db_tables' === $stage && null !== $saved['cursor'] ) {
+			$saved['cursor']    = null;
+			$saved['rows_done'] = isset( $saved['table_rows_start'] ) ? $saved['table_rows_start'] : $saved['rows_done'];
+		}
+		$this->data = $saved;
+		$this->save();
 	}
 
 	private function stage() {
@@ -529,6 +550,9 @@ class WPS_Job {
 
 			case 'db_tables':
 				$table = $d['tables'][ $d['table'] ];
+				if ( null === $d['cursor'] ) {
+					$d['table_rows_start'] = $d['rows_done'];
+				}
 				$chunk = $src->call(
 					'export_chunk',
 					array(
