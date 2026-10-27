@@ -261,7 +261,7 @@ class WPS_Admin {
 				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( $notices[ $notice ] ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( is_multisite() ) : ?>
-				<p class="wps-network-note"><span class="dashicons dashicons-networking"></span> マルチサイトでは、ネットワークのすべてのサイトをまとめて同期します。接続先もマルチサイト（同じ型）にしてください。</p>
+				<p class="wps-network-note"><span class="dashicons dashicons-networking"></span> マルチサイトでは、ネットワークのすべてのサイトをまとめて同期します。接続先もマルチサイトにしてください。</p>
 			<?php endif; ?>
 
 			<nav class="nav-tab-wrapper wps-tabs">

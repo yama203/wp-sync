@@ -102,8 +102,6 @@
 		var l = info.local;
 		if ( !! r.network !== !! l.network ) {
 			list.push( l.network ? 'このサイトはマルチサイト、接続先はシングルサイトです。シングルサイトとマルチサイトの間では同期できません。' : 'このサイトはシングルサイト、接続先はマルチサイトです。シングルサイトとマルチサイトの間では同期できません。' );
-		} else if ( r.network && r.network.subdomain !== l.network.subdomain ) {
-			list.push( 'サブドメイン型とサブディレクトリ型のマルチサイトの間では同期できません。' );
 		}
 		if ( direction() === 'pull' && ! r.allow_pull ) {
 			list.push( '接続先で pull が許可されていません。接続先の WP Sync の「このサイトの設定」で許可してください。' );

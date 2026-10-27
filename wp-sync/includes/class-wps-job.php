@@ -106,8 +106,13 @@ class WPS_Job {
 	/**
 	 * マルチサイトで、送り元の各サイトが送り先でどのドメイン・パス・URL になるか。
 	 *
-	 * ふつうは、ネットワークのドメインとパスを付け替えて作る（https://example.com/door/ → http://localhost:10898/door/）。
-	 * 送り先に同じ ID で同じ場所（パスかサブドメイン）のサイトがあるか、どちらかが別のドメインを当てているサイトなら、送り先のそのサイトに合わせる。
+	 * ふつうは、ネットワークの中での場所（パスかサブドメイン）を送り先のネットワークに付け替えて作る
+	 * （https://example.com/door/ → http://localhost:10898/door/、https://door.example.com → http://door.localhost:10898）。
+	 * 送り先に同じ ID で同じ場所のサイトがあるか、どちらかが別のドメインを当てているサイトなら、送り先のそのサイトに合わせる。
+	 *
+	 * ネットワークの型（SUBDOMAIN_INSTALL）が両方で違っていてもよい。サブディレクトリ型のネットワークでも、
+	 * サイトに sub.ネットワークのドメイン を当てていればサブドメインの場所として扱う（本番はサブディレクトリ型で
+	 * kinoko.example.com を当て、ローカルはサブドメイン型で kinoko.localhost:10856、のような組み合わせ）。
 	 *
 	 * @return array<int,array{id:int,src_home:string,src_siteurl:string,domain:string,path:string,home:string,siteurl:string,same:bool}>
 	 */
@@ -125,31 +130,22 @@ class WPS_Job {
 
 		$out = array();
 		foreach ( $sn['sites'] as $site ) {
-			$id   = (int) $site['id'];
-			$rel  = self::site_rel( $site, $sn );
-			$same = isset( $by_id[ $id ] ) && ( null === $rel || self::site_rel( $by_id[ $id ], $dn ) === $rel || null === self::site_rel( $by_id[ $id ], $dn ) );
-			if ( $same ) {
-				$to = $by_id[ $id ];
+			$id    = (int) $site['id'];
+			$place = self::site_place( $site, $sn );
+			$to    = null;
+			if ( isset( $by_id[ $id ] ) ) {
+				$there = self::site_place( $by_id[ $id ], $dn );
+				if ( null === $place || null === $there || $place === $there ) {
+					$to = $by_id[ $id ];
+				}
+			}
+			if ( $to ) {
 				$domain  = $to['domain'];
 				$path    = $to['path'];
 				$home    = $to['home'];
 				$siteurl = $to['siteurl'];
 			} else {
-				$to = null;
-				if ( $dn['subdomain'] ) {
-					// サブドメイン型。sub.送り元のドメイン → sub.送り先のドメイン。別のドメインを当てているサイトはそのまま。
-					$suffix = '.' . $sn['domain'];
-					$domain = substr( $site['domain'], -strlen( $suffix ) ) === $suffix
-						? substr( $site['domain'], 0, -strlen( $suffix ) ) . '.' . $dn['domain']
-						: $site['domain'];
-					$path   = $site['path'];
-				} elseif ( null === $rel ) {
-					$domain = $site['domain'];
-					$path   = $site['path'];
-				} else {
-					$domain = $dn['domain'];
-					$path   = $dn['path'] . $rel;
-				}
+				list( $domain, $path ) = self::place_address( $place, $site, $dn );
 				$home    = $scheme . '://' . $domain . untrailingslashit( $path );
 				$siteurl = 0 === strpos( $site['siteurl'], $site['home'] ) ? $home . substr( $site['siteurl'], strlen( $site['home'] ) ) : $home;
 			}
@@ -169,20 +165,45 @@ class WPS_Job {
 	}
 
 	/**
-	 * ネットワークの中でのサイトの場所（サブディレクトリ型はパス、サブドメイン型はサブドメイン）。別のドメインを当てているサイトは null。
+	 * ネットワークの中でのサイトの場所。メインと同じ場所は ''、パスは 'dir:door/'、サブドメインは 'sub:door'。
+	 * ネットワークと関係のないドメインを当てているサイトは null。
 	 */
-	private static function site_rel( array $site, array $network ) {
-		if ( $network['subdomain'] ) {
-			$suffix = '.' . $network['domain'];
-			if ( $site['domain'] === $network['domain'] ) {
-				return '';
+	private static function site_place( array $site, array $network ) {
+		$suffix = '.' . $network['domain'];
+		if ( $site['domain'] === $network['domain'] ) {
+			if ( 0 !== strpos( $site['path'], $network['path'] ) ) {
+				return null;
 			}
-			return substr( $site['domain'], -strlen( $suffix ) ) === $suffix ? substr( $site['domain'], 0, -strlen( $suffix ) ) : null;
+			$rel = (string) substr( $site['path'], strlen( $network['path'] ) );
+			return '' === $rel ? '' : 'dir:' . $rel;
 		}
-		if ( $site['domain'] !== $network['domain'] || 0 !== strpos( $site['path'], $network['path'] ) ) {
-			return null;
+		if ( substr( $site['domain'], -strlen( $suffix ) ) === $suffix && $site['path'] === $network['path'] ) {
+			return 'sub:' . substr( $site['domain'], 0, -strlen( $suffix ) );
 		}
-		return (string) substr( $site['path'], strlen( $network['path'] ) );
+		return null;
+	}
+
+	/**
+	 * 場所を、送り先のネットワークのドメインとパスにする。
+	 *
+	 * @return array{0:string,1:string}
+	 */
+	private static function place_address( $place, array $site, array $network ) {
+		if ( null === $place ) {
+			return array( $site['domain'], $site['path'] );
+		}
+		if ( '' === $place ) {
+			return array( $network['domain'], $network['path'] );
+		}
+		$name = substr( $place, 4 );
+		if ( 0 === strpos( $place, 'dir:' ) ) {
+			// パスの場所。サブドメイン型のネットワークへはサブドメインにする（door/ → door.ドメイン）。
+			return $network['subdomain']
+				? array( str_replace( '/', '-', trim( $name, '/' ) ) . '.' . $network['domain'], $network['path'] )
+				: array( $network['domain'], $network['path'] . $name );
+		}
+		// サブドメインの場所。サブディレクトリ型のネットワークでも、サイトにサブドメインを当てた形のまま送る。
+		return array( $name . '.' . $network['domain'], $network['path'] );
 	}
 
 	/**
@@ -229,9 +250,6 @@ class WPS_Job {
 			throw new Exception( 'シングルサイトとマルチサイトの間では同期できません（' . ( $linfo['multisite'] ? 'このサイトがマルチサイト、接続先がシングルサイト' : 'このサイトがシングルサイト、接続先がマルチサイト' ) . 'です）。' );
 		}
 		if ( $linfo['multisite'] ) {
-			if ( $rinfo['network']['subdomain'] !== $linfo['network']['subdomain'] ) {
-				throw new Exception( 'サブドメイン型とサブディレクトリ型のマルチサイトの間では同期できません。' );
-			}
 			if ( $rinfo['network']['main'] !== $linfo['network']['main'] ) {
 				throw new Exception( 'メインのサイトの ID が両方で違うので同期できません。' );
 			}
