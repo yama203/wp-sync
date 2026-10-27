@@ -108,6 +108,9 @@ class WPS_Remote_Endpoint extends WPS_Endpoint {
 				'redirection' => 0,
 				'headers'     => array(
 					'Content-Type'    => 'application/octet-stream',
+					// 本文はもともと gzip なので、サーバーにさらに圧縮しないよう頼む。サーバー（Apache の mod_deflate など）が gzip をかぶせると、
+					// WordPress の通信（cURL）が外側を解いたあと中身の gzip まで解いてしまい、署名が合わなくなる（veritas-solve.com で発生。0.3.2）
+					'Accept-Encoding' => 'identity',
 					'X-WPS-Time'      => $time,
 					'X-WPS-Signature' => WPS_Transport::sign( $time, $body, $this->secret ),
 				),

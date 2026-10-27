@@ -89,6 +89,8 @@ class WPS_Server {
 		$now = (string) time();
 		status_header( $status );
 		header( 'Content-Type: application/octet-stream' );
+		// 途中で圧縮・変換しないでもらう（本文はもともと gzip。サーバーが gzip をかぶせると、受け取る側で二重に解かれて署名が合わなくなる。0.3.2）
+		header( 'Cache-Control: no-store, no-transform' );
 		header( 'X-WPS-Time: ' . $now );
 		header( 'X-WPS-Signature: ' . WPS_Transport::sign( $now, $out, WPS_Settings::secret() ) );
 		header( 'Content-Length: ' . strlen( $out ) );
