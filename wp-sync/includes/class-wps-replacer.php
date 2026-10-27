@@ -44,8 +44,9 @@ class WPS_Replacer {
 	 * @param array $src   送り元の info。
 	 * @param array $dst   送り先の info。
 	 * @param array $extra 画面で足した組（[from, to] の配列）。
+	 * @param array $sites マルチサイトのメイン以外のサイトの URL の組（[from, to] の配列）。区切りで止めて置き換える。
 	 */
-	public static function build_pairs( array $src, array $dst, array $extra = array() ) {
+	public static function build_pairs( array $src, array $dst, array $extra = array(), array $sites = array() ) {
 		$pairs = array();
 
 		// [前, 後, 区切りで止めるか]
@@ -54,6 +55,9 @@ class WPS_Replacer {
 		// 送り元が直下で送り先がフォルダのときは区別できないので、home の置換に任せる（siteurl の値は送り先のものを残す）。
 		if ( $src['siteurl'] !== $src['home'] ) {
 			$urls[] = array( $src['siteurl'], $dst['siteurl'], true );
+		}
+		foreach ( $sites as $site ) {
+			$urls[] = array( $site[0], $site[1], true );
 		}
 		if ( ! empty( $src['content_url'] ) && ! empty( $dst['content_url'] ) ) {
 			$urls[] = array( $src['content_url'], $dst['content_url'], true );

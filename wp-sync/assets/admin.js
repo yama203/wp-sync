@@ -89,20 +89,27 @@
 		box.querySelector( '.wps-site-meta' ).textContent = meta;
 	}
 
+	function networkText( network ) {
+		return network ? 'マルチサイト（' + network.sites + ' サイト）· ' : '';
+	}
+
 	function warnings() {
 		var r = info.remote;
 		var list = [];
 		if ( ! r.compatible ) {
 			list.push( '接続先の WP Sync（' + r.version + '）とこのサイト（' + wpsAdmin.version + '）のバージョンが合いません。両方を同じバージョンにしてください。' );
 		}
-		if ( r.multisite ) {
-			list.push( '接続先はマルチサイトです。マルチサイトにはまだ対応していません。' );
+		var l = info.local;
+		if ( !! r.network !== !! l.network ) {
+			list.push( l.network ? 'このサイトはマルチサイト、接続先はシングルサイトです。シングルサイトとマルチサイトの間では同期できません。' : 'このサイトはシングルサイト、接続先はマルチサイトです。シングルサイトとマルチサイトの間では同期できません。' );
+		} else if ( r.network && r.network.subdomain !== l.network.subdomain ) {
+			list.push( 'サブドメイン型とサブディレクトリ型のマルチサイトの間では同期できません。' );
 		}
 		if ( direction() === 'pull' && ! r.allow_pull ) {
-			list.push( '接続先で pull が許可されていません。接続先の「ツール → WP Sync → このサイトの設定」で許可してください。' );
+			list.push( '接続先で pull が許可されていません。接続先の WP Sync の「このサイトの設定」で許可してください。' );
 		}
 		if ( direction() === 'push' && ! r.allow_push ) {
-			list.push( '接続先で push が許可されていません。接続先の「ツール → WP Sync → このサイトの設定」で「このサイトへ push するのを許可する」をオンにしてください。' );
+			list.push( '接続先で push が許可されていません。接続先の WP Sync の「このサイトの設定」で「このサイトへ push するのを許可する」をオンにしてください。' );
 		}
 		return list;
 	}
@@ -166,9 +173,9 @@
 		var pull = direction() === 'pull';
 
 		siteBox( 'wps-site-local', pull ? '送り先・上書きされます' : '送り元', pull, info.local.name || null,
-			'テーブル ' + info.local.size.tables + ' 個（' + info.local.size.bytes + '）' );
+			networkText( info.local.network ) + 'テーブル ' + info.local.size.tables + ' 個（' + info.local.size.bytes + '）' );
 		siteBox( 'wps-site-remote', pull ? '送り元' : '送り先・上書きされます', ! pull, r.name || r.home,
-			'WP ' + r.wp + ' · PHP ' + r.php + ' · テーブル ' + r.size.tables + ' 個（' + r.size.bytes + '）' );
+			networkText( r.network ) + 'WP ' + r.wp + ' · PHP ' + r.php + ' · テーブル ' + r.size.tables + ' 個（' + r.size.bytes + '）' );
 		document.querySelector( '.wps-flow .dashicons' ).className = 'dashicons ' + ( pull ? 'dashicons-arrow-left-alt' : 'dashicons-arrow-right-alt' );
 
 		var list = warnings();

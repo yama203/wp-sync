@@ -287,15 +287,22 @@ class WPS_DB {
 			}
 		}
 
-		$options     = $dst . 'options';
+		$multisite   = is_multisite();
+		$main        = $multisite ? (int) get_main_site_id() : 1;
+		$options     = self::main_options();
 		$tmp_options = self::TMP . $options;
 		$tmp_meta    = self::TMP . $dst . 'usermeta';
 		$existing    = self::column( 'SHOW TABLES LIKE ' . self::like( $dst ) );
+		$keep_active = ! empty( $args['keep_active_plugins'] );
 
 		// 接頭辞が違うとき、接頭辞の付いたオプション名とユーザーメタのキーを直す（権限が消えないように）。
+		// マルチサイトでは、サイトごとの options（wp_2_options など）の wp_2_user_roles も直す。
 		if ( $src !== $dst ) {
-			if ( in_array( $options, $tables, true ) ) {
-				self::query( 'UPDATE ' . self::ident( $tmp_options ) . ' SET option_name = ' . self::quote( $dst . 'user_roles' ) . ' WHERE option_name = ' . self::quote( $src . 'user_roles' ) );
+			foreach ( $tables as $table ) {
+				if ( preg_match( '/^' . preg_quote( $dst, '/' ) . '(\d+_)?options$/', $table, $m ) ) {
+					$blog = isset( $m[1] ) ? $m[1] : '';
+					self::query( 'UPDATE ' . self::ident( self::TMP . $table ) . ' SET option_name = ' . self::quote( $dst . $blog . 'user_roles' ) . ' WHERE option_name = ' . self::quote( $src . $blog . 'user_roles' ) );
+				}
 			}
 			if ( in_array( $dst . 'usermeta', $tables, true ) ) {
 				self::query( 'UPDATE ' . self::ident( $tmp_meta ) . ' SET meta_key = CONCAT(' . self::quote( $dst ) . ', SUBSTRING(meta_key, ' . ( strlen( $src ) + 1 ) . ')) WHERE meta_key LIKE ' . self::like( $src ) );
@@ -305,30 +312,28 @@ class WPS_DB {
 		if ( in_array( $options, $tables, true ) ) {
 			// このプラグインの設定（接続キー・接続先・許可）と、サイトの URL（home・siteurl）は取り込み先のものを残す。
 			// URL は置換でも合わせているが、WordPress をフォルダに置いているかどうかが違うと置換では合わないことがある。
-			$names = implode( ',', array_map( array( __CLASS__, 'quote' ), array_merge( WPS_Settings::KEEP_OPTIONS, array( 'home', 'siteurl' ), empty( $args['keep_active_plugins'] ) ? array() : array( 'active_plugins' ) ) ) );
-			$keep  = array();
-			if ( in_array( $options, $existing, true ) ) {
-				$keep = self::rows( 'SELECT option_name, option_value, autoload FROM ' . self::ident( $options ) . ' WHERE option_name IN (' . $names . ')' );
-			}
-			// 送り元の接続キーなどは、取り込み先に同じ行がなくても持ち込まない。home・siteurl は残せるときだけ差し替える。
-			$drop = array_merge( WPS_Settings::KEEP_OPTIONS, array( 'wps_backup' ), array_column( $keep, 0 ) );
-			self::query( 'DELETE FROM ' . self::ident( $tmp_options ) . ' WHERE option_name IN (' . implode( ',', array_map( array( __CLASS__, 'quote' ), $drop ) ) . ')' );
-			foreach ( $keep as $row ) {
-				self::query( 'INSERT INTO ' . self::ident( $tmp_options ) . ' (option_name, option_value, autoload) VALUES (' . implode( ',', array_map( array( __CLASS__, 'quote' ), $row ) ) . ')' );
-			}
+			// 送り元の接続キーなどは、取り込み先に同じ行がなくても持ち込まない。
+			self::keep_options( $options, $existing, array_merge( WPS_Settings::KEEP_OPTIONS, array( 'home', 'siteurl' ), $keep_active ? array( 'active_plugins' ) : array() ), array_merge( WPS_Settings::KEEP_OPTIONS, array( 'wps_backup' ) ) );
 
-			// 取り込んだ後もこのプラグインが有効なままになるようにする。
-			$active  = self::column( 'SELECT option_value FROM ' . self::ident( $tmp_options ) . " WHERE option_name = 'active_plugins'" );
-			$plugins = $active ? @unserialize( $active[0], array( 'allowed_classes' => false ) ) : array(); // phpcs:ignore
-			$plugins = is_array( $plugins ) ? $plugins : array();
-			if ( ! in_array( WPS_BASENAME, $plugins, true ) ) {
-				$plugins[] = WPS_BASENAME;
-				if ( $active ) {
-					self::query( 'UPDATE ' . self::ident( $tmp_options ) . ' SET option_value = ' . self::quote( serialize( array_values( $plugins ) ) ) . " WHERE option_name = 'active_plugins'" );
-				} else {
-					self::query( 'INSERT INTO ' . self::ident( $tmp_options ) . " (option_name, option_value, autoload) VALUES ('active_plugins', " . self::quote( serialize( $plugins ) ) . ", 'yes')" );
+			// 取り込んだ後もこのプラグインが有効なままになるようにする（マルチサイトでは下でネットワークで有効にする）。
+			if ( ! $multisite ) {
+				$active  = self::column( 'SELECT option_value FROM ' . self::ident( $tmp_options ) . " WHERE option_name = 'active_plugins'" );
+				$plugins = $active ? @unserialize( $active[0], array( 'allowed_classes' => false ) ) : array(); // phpcs:ignore
+				$plugins = is_array( $plugins ) ? $plugins : array();
+				if ( ! in_array( WPS_BASENAME, $plugins, true ) ) {
+					$plugins[] = WPS_BASENAME;
+					if ( $active ) {
+						self::query( 'UPDATE ' . self::ident( $tmp_options ) . ' SET option_value = ' . self::quote( serialize( array_values( $plugins ) ) ) . " WHERE option_name = 'active_plugins'" );
+					} else {
+						self::query( 'INSERT INTO ' . self::ident( $tmp_options ) . " (option_name, option_value, autoload) VALUES ('active_plugins', " . self::quote( serialize( $plugins ) ) . ", 'yes')" );
+					}
 				}
 			}
+		}
+
+		$orphans = array();
+		if ( $multisite ) {
+			$orphans = self::finalize_network( $args, $tables, $existing, $main, $keep_active );
 		}
 
 		// 前回のバックアップは消して、今回の入れ替え前を新しいバックアップにする。
@@ -339,6 +344,11 @@ class WPS_DB {
 		$renames = array();
 		$backed  = array();
 		$created = array();
+		// 送り元にないサイトのテーブルは、入れ替えた後に残っていると同じ ID でサイトを作ったときに混ざるので、バックアップに回す。
+		foreach ( $orphans as $table ) {
+			$renames[] = self::ident( $table ) . ' TO ' . self::ident( self::BAK . $table );
+			$backed[]  = $table;
+		}
 		foreach ( $tables as $table ) {
 			if ( in_array( $table, $existing, true ) ) {
 				$renames[] = self::ident( $table ) . ' TO ' . self::ident( self::BAK . $table );
@@ -368,6 +378,102 @@ class WPS_DB {
 		);
 	}
 
+	/** WP Sync の設定を置く options テーブル（マルチサイトではメインのサイトのもの）。 */
+	private static function main_options() {
+		global $wpdb;
+		$main = is_multisite() ? (int) get_main_site_id() : 1;
+		return $wpdb->base_prefix . ( 1 === $main ? '' : $main . '_' ) . 'options';
+	}
+
+	/**
+	 * 仮テーブルの options のうち $names の行を、今のテーブルのものに差し替える。
+	 * $drop の行は、今のテーブルに同じ行がなくても仮テーブルから消す。
+	 */
+	private static function keep_options( $table, $existing, $names, $drop = array() ) {
+		$tmp  = self::TMP . $table;
+		$keep = array();
+		if ( in_array( $table, $existing, true ) ) {
+			$keep = self::rows( 'SELECT option_name, option_value, autoload FROM ' . self::ident( $table ) . ' WHERE option_name IN (' . implode( ',', array_map( array( __CLASS__, 'quote' ), $names ) ) . ')' );
+		}
+		$drop = array_merge( $drop, array_column( $keep, 0 ) );
+		if ( $drop ) {
+			self::query( 'DELETE FROM ' . self::ident( $tmp ) . ' WHERE option_name IN (' . implode( ',', array_map( array( __CLASS__, 'quote' ), $drop ) ) . ')' );
+		}
+		foreach ( $keep as $row ) {
+			self::query( 'INSERT INTO ' . self::ident( $tmp ) . ' (option_name, option_value, autoload) VALUES (' . implode( ',', array_map( array( __CLASS__, 'quote' ), $row ) ) . ')' );
+		}
+	}
+
+	/**
+	 * マルチサイトの取り込みで、ネットワークのドメインや各サイトの URL を取り込み先に合わせる。
+	 *
+	 * @return string[] 送り元にないサイトのテーブル（入れ替えのときにバックアップに回す）。
+	 */
+	private static function finalize_network( $args, $tables, $existing, $main, $keep_active ) {
+		global $wpdb;
+		$dst   = $wpdb->base_prefix;
+		$sites = isset( $args['sites'] ) ? (array) $args['sites'] : array();
+		$ids   = array_map( 'intval', array_column( $sites, 0 ) );
+
+		// サイトのドメインとパス（wp_blogs）。送り元の各サイトが、取り込み先でどこになるかは同期を始めるときに決めてある。
+		$blogs = $dst . 'blogs';
+		if ( in_array( $blogs, $tables, true ) ) {
+			foreach ( $sites as $site ) {
+				self::query( 'UPDATE ' . self::ident( self::TMP . $blogs ) . ' SET domain = ' . self::quote( $site[1] ) . ', path = ' . self::quote( $site[2] ) . ' WHERE blog_id = ' . (int) $site[0] );
+			}
+		}
+
+		// ネットワークのドメインとパス（wp_site）は、wp-config.php の DOMAIN_CURRENT_SITE と合っていないといけないので取り込み先のものを残す。
+		$site = $dst . 'site';
+		if ( in_array( $site, $tables, true ) && in_array( $site, $existing, true ) ) {
+			foreach ( self::rows( 'SELECT id, domain, path FROM ' . self::ident( $site ) ) as $row ) {
+				self::query( 'UPDATE ' . self::ident( self::TMP . $site ) . ' SET domain = ' . self::quote( $row[1] ) . ', path = ' . self::quote( $row[2] ) . ' WHERE id = ' . (int) $row[0] );
+			}
+		}
+
+		$meta = $dst . 'sitemeta';
+		if ( in_array( $meta, $tables, true ) ) {
+			$keys = array_merge( array( 'siteurl' ), $keep_active ? array( 'active_sitewide_plugins' ) : array() );
+			if ( in_array( $meta, $existing, true ) ) {
+				foreach ( self::rows( 'SELECT site_id, meta_key, meta_value FROM ' . self::ident( $meta ) . ' WHERE meta_key IN (' . implode( ',', array_map( array( __CLASS__, 'quote' ), $keys ) ) . ')' ) as $row ) {
+					self::query( 'DELETE FROM ' . self::ident( self::TMP . $meta ) . ' WHERE site_id = ' . (int) $row[0] . ' AND meta_key = ' . self::quote( $row[1] ) );
+					self::query( 'INSERT INTO ' . self::ident( self::TMP . $meta ) . ' (site_id, meta_key, meta_value) VALUES (' . (int) $row[0] . ', ' . self::quote( $row[1] ) . ', ' . self::quote( $row[2] ) . ')' );
+				}
+			}
+
+			// 取り込んだ後もこのプラグインがネットワークで有効なままになるようにする。
+			foreach ( self::rows( 'SELECT meta_id, meta_value FROM ' . self::ident( self::TMP . $meta ) . " WHERE meta_key = 'active_sitewide_plugins'" ) as $row ) {
+				$plugins = @unserialize( (string) $row[1], array( 'allowed_classes' => false ) ); // phpcs:ignore
+				$plugins = is_array( $plugins ) ? $plugins : array();
+				if ( ! isset( $plugins[ WPS_BASENAME ] ) ) {
+					$plugins[ WPS_BASENAME ] = time();
+					self::query( 'UPDATE ' . self::ident( self::TMP . $meta ) . ' SET meta_value = ' . self::quote( serialize( $plugins ) ) . ' WHERE meta_id = ' . (int) $row[0] );
+				}
+			}
+		}
+
+		// メイン以外のサイトも、取り込み先の同じサイトに入れるときは URL（と有効化しているプラグインの設定）を取り込み先のものにする。
+		// 取り込み先で別のサイトが同じ ID を使っていたときは、置換した送り元の値のまま。
+		foreach ( $sites as $site ) {
+			$id    = (int) $site[0];
+			$table = $dst . ( 1 === $id ? '' : $id . '_' ) . 'options';
+			if ( $id !== $main && in_array( $table, $tables, true ) ) {
+				if ( ! empty( $site[3] ) ) {
+					self::keep_options( $table, $existing, array_merge( array( 'home', 'siteurl' ), $keep_active ? array( 'active_plugins' ) : array() ) );
+				}
+			}
+		}
+
+		// 送り元にないサイト（取り込み先にだけあるサイト）のテーブル。
+		$orphans = array();
+		foreach ( $existing as $table ) {
+			if ( ! in_array( $table, $tables, true ) && preg_match( '/^' . preg_quote( $dst, '/' ) . '(\d+)_/', $table, $m ) && ! in_array( (int) $m[1], $ids, true ) && 1 !== (int) $m[1] ) {
+				$orphans[] = $table;
+			}
+		}
+		return $orphans;
+	}
+
 	/**
 	 * @return array{time:int,from:string,tables:int}|null
 	 */
@@ -376,7 +482,7 @@ class WPS_DB {
 		if ( ! $tables ) {
 			return null;
 		}
-		$info = get_option( 'wps_backup' );
+		$info = WPS_Settings::get( 'wps_backup' );
 		return array(
 			'time'   => is_array( $info ) && isset( $info['time'] ) ? (int) $info['time'] : 0,
 			'from'   => is_array( $info ) && isset( $info['from'] ) ? (string) $info['from'] : '',
@@ -393,7 +499,7 @@ class WPS_DB {
 		if ( ! $backups ) {
 			throw new Exception( '戻せるバックアップがありません。' );
 		}
-		$info     = get_option( 'wps_backup' );
+		$info     = WPS_Settings::get( 'wps_backup' );
 		$created  = is_array( $info ) && ! empty( $info['created'] ) ? (array) $info['created'] : array();
 		$existing = self::column( 'SHOW TABLES LIKE ' . self::like( $wpdb->base_prefix ) );
 		self::session();
@@ -422,7 +528,7 @@ class WPS_DB {
 				self::query( 'DROP TABLE IF EXISTS ' . self::ident( $table ) );
 			}
 		}
-		self::query( 'DELETE FROM ' . self::ident( $wpdb->base_prefix . 'options' ) . " WHERE option_name = 'wps_backup'" );
+		self::query( 'DELETE FROM ' . self::ident( self::main_options() ) . " WHERE option_name = 'wps_backup'" );
 		wp_cache_flush();
 		return array( 'tables' => count( $restored ) );
 	}

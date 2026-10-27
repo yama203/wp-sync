@@ -1,6 +1,6 @@
 <?php
 /**
- * 管理画面（ツール → WP Sync）。
+ * 管理画面（ツール → WP Sync。マルチサイトではネットワーク管理の 設定 → WP Sync）。
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -12,18 +12,20 @@ class WPS_Admin {
 	const SLUG = 'wp-sync';
 
 	public static function init() {
-		add_action( 'admin_menu', array( __CLASS__, 'menu' ) );
+		add_action( is_multisite() ? 'network_admin_menu' : 'admin_menu', array( __CLASS__, 'menu' ) );
 		add_action( 'admin_post_wps_permissions', array( __CLASS__, 'save_permissions' ) );
 		add_action( 'admin_post_wps_regenerate', array( __CLASS__, 'regenerate' ) );
 		add_action( 'admin_post_wps_disconnect', array( __CLASS__, 'disconnect' ) );
 		foreach ( array( 'connect', 'info', 'start', 'step', 'restore' ) as $action ) {
 			add_action( 'wp_ajax_wps_' . $action, array( __CLASS__, 'ajax_' . $action ) );
 		}
-		add_filter( 'plugin_action_links_' . WPS_BASENAME, array( __CLASS__, 'action_links' ) );
+		add_filter( ( is_multisite() ? 'network_admin_' : '' ) . 'plugin_action_links_' . WPS_BASENAME, array( __CLASS__, 'action_links' ) );
 	}
 
 	public static function menu() {
-		$hook = add_management_page( 'WP Sync', 'WP Sync', 'manage_options', self::SLUG, array( __CLASS__, 'render' ) );
+		$hook = is_multisite()
+			? add_submenu_page( 'settings.php', 'WP Sync', 'WP Sync', WPS_Settings::capability(), self::SLUG, array( __CLASS__, 'render' ) )
+			: add_management_page( 'WP Sync', 'WP Sync', WPS_Settings::capability(), self::SLUG, array( __CLASS__, 'render' ) );
 		add_action( 'admin_print_scripts-' . $hook, array( __CLASS__, 'assets' ) );
 	}
 
@@ -33,7 +35,7 @@ class WPS_Admin {
 	}
 
 	private static function url( $args = array() ) {
-		return add_query_arg( array_merge( array( 'page' => self::SLUG ), $args ), admin_url( 'tools.php' ) );
+		return add_query_arg( array_merge( array( 'page' => self::SLUG ), $args ), is_multisite() ? network_admin_url( 'settings.php' ) : admin_url( 'tools.php' ) );
 	}
 
 	public static function assets() {
@@ -53,7 +55,7 @@ class WPS_Admin {
 	}
 
 	private static function check_post( $action ) {
-		if ( ! current_user_can( 'manage_options' ) ) {
+		if ( ! current_user_can( WPS_Settings::capability() ) ) {
 			wp_die( '権限がありません。' );
 		}
 		check_admin_referer( $action );
@@ -81,7 +83,7 @@ class WPS_Admin {
 	}
 
 	private static function ajax_guard() {
-		if ( ! current_user_can( 'manage_options' ) ) {
+		if ( ! current_user_can( WPS_Settings::capability() ) ) {
 			wp_send_json_error( array( 'message' => '権限がありません。' ), 403 );
 		}
 		check_ajax_referer( 'wps_ajax' );
@@ -92,6 +94,7 @@ class WPS_Admin {
 	private static function ajax_run( $callback ) {
 		self::ajax_guard();
 		try {
+			WPS_Settings::assert_main_site();
 			wp_send_json_success( call_user_func( $callback ) );
 		} catch ( Throwable $e ) {
 			wp_send_json_error( array( 'message' => $e->getMessage() ) );
@@ -108,8 +111,8 @@ class WPS_Admin {
 				$parsed = WPS_Settings::parse_connection_key( self::post( 'key' ) );
 				$url    = trim( (string) self::post( 'url' ) );
 				$url    = '' !== $url ? untrailingslashit( esc_url_raw( $url ) ) : $parsed['url'];
-				if ( untrailingslashit( get_option( 'home' ) ) === $parsed['url'] && WPS_Settings::secret() === $parsed['secret'] ) {
-					throw new Exception( 'これはこのサイト自身の接続キーです。接続先のサイトの「ツール → WP Sync」にある接続キーを貼り付けてください。' );
+				if ( WPS_Settings::home() === $parsed['url'] && WPS_Settings::secret() === $parsed['secret'] ) {
+					throw new Exception( 'これはこのサイト自身の接続キーです。接続先のサイトの WP Sync の「このサイトの設定」にある接続キーを貼り付けてください。' );
 				}
 				$endpoint = new WPS_Remote_Endpoint( $url, $parsed['secret'] );
 				$info     = $endpoint->call( 'info' );
@@ -164,6 +167,7 @@ class WPS_Admin {
 				'db'         => $remote['db'],
 				'prefix'     => $remote['prefix'],
 				'multisite'  => $remote['multisite'],
+				'network'    => self::network_payload( $remote ),
 				'allow_pull' => $remote['allow_pull'],
 				'allow_push' => $remote['allow_push'],
 				'size'       => $size( $remote ),
@@ -171,6 +175,7 @@ class WPS_Admin {
 				'code'       => $remote['code'],
 			),
 			'local'  => array(
+				'network' => self::network_payload( $local ),
 				'name'   => $local['name'],
 				'home'   => $local['home'],
 				'prefix' => $local['prefix'],
@@ -182,6 +187,16 @@ class WPS_Admin {
 				'pull' => WPS_Job::preview_pairs( $remote, $local ),
 				'push' => WPS_Job::preview_pairs( $local, $remote ),
 			),
+		);
+	}
+
+	private static function network_payload( $info ) {
+		if ( empty( $info['network'] ) ) {
+			return null;
+		}
+		return array(
+			'subdomain' => (bool) $info['network']['subdomain'],
+			'sites'     => count( $info['network']['sites'] ),
 		);
 	}
 
@@ -246,7 +261,7 @@ class WPS_Admin {
 				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( $notices[ $notice ] ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( is_multisite() ) : ?>
-				<div class="notice notice-warning"><p>マルチサイトにはまだ対応していません。</p></div>
+				<p class="wps-network-note"><span class="dashicons dashicons-networking"></span> マルチサイトでは、ネットワークのすべてのサイトをまとめて同期します。接続先もマルチサイト（同じ型）にしてください。</p>
 			<?php endif; ?>
 
 			<nav class="nav-tab-wrapper wps-tabs">
@@ -260,7 +275,7 @@ class WPS_Admin {
 					<section class="wps-card" id="wps-connect">
 						<h2 class="wps-card-title">接続先につなぐ</h2>
 						<ol class="wps-steps">
-							<li>接続先のサイトに WP Sync を入れ、「ツール → WP Sync → このサイトの設定」で接続キーをコピーします。</li>
+							<li>接続先のサイトに WP Sync を入れ、「ツール → WP Sync → このサイトの設定」（マルチサイトでは「ネットワーク管理 → 設定 → WP Sync」）で接続キーをコピーします。</li>
 							<li>下に貼り付けて「接続する」を押します。</li>
 						</ol>
 						<textarea id="wps-key" class="large-text code wps-key" rows="3" placeholder="wps1:..."></textarea>
@@ -292,8 +307,8 @@ class WPS_Admin {
 							<div class="wps-site" id="wps-site-local">
 								<span class="wps-role"></span>
 								<span class="wps-site-kind">このサイト</span>
-								<strong class="wps-site-name"><?php echo esc_html( get_option( 'blogname' ) ); ?></strong>
-								<span class="wps-site-url"><?php echo esc_html( untrailingslashit( get_option( 'home' ) ) ); ?></span>
+								<strong class="wps-site-name"><?php echo esc_html( WPS_Settings::get( 'blogname' ) ); ?></strong>
+								<span class="wps-site-url"><?php echo esc_html( WPS_Settings::home() ); ?></span>
 								<span class="wps-site-meta"></span>
 							</div>
 							<div class="wps-flow" aria-hidden="true"><span class="dashicons dashicons-arrow-left-alt"></span></div>

@@ -105,6 +105,7 @@ class WPS_Server {
 		if ( ! isset( self::ACTIONS[ $action ] ) ) {
 			throw new Exception( '知らない操作です: ' . $action );
 		}
+		WPS_Settings::assert_main_site();
 		if ( $remote ) {
 			$need = self::ACTIONS[ $action ];
 			$ok   = 'any' === $need
@@ -168,6 +169,7 @@ class WPS_Server {
 			'uploads_url' => untrailingslashit( $uploads['baseurl'] ),
 			'prefix'      => $wpdb->base_prefix,
 			'multisite'   => is_multisite(),
+			'network'     => self::network(),
 			'tables'      => WPS_DB::tables(),
 			'code'        => WPS_Files::code_items(),
 			'allow_pull'  => WPS_Settings::allow_pull(),
@@ -177,6 +179,37 @@ class WPS_Server {
 			'php'         => PHP_VERSION,
 			'db'          => $wpdb->db_server_info(),
 			'post_max'    => wp_convert_hr_to_bytes( (string) ini_get( 'post_max_size' ) ),
+		);
+	}
+
+	/**
+	 * マルチサイトのネットワークとサイトの一覧（シングルサイトでは null）。
+	 *
+	 * @return array{subdomain:bool,domain:string,path:string,main:int,sites:array}|null
+	 */
+	private static function network() {
+		if ( ! is_multisite() ) {
+			return null;
+		}
+		$network = get_network();
+		$sites   = array();
+		foreach ( get_sites( array( 'number' => 0, 'network_id' => $network->id ) ) as $site ) {
+			$id      = (int) $site->blog_id;
+			$sites[] = array(
+				'id'      => $id,
+				'domain'  => $site->domain,
+				'path'    => $site->path,
+				'name'    => get_blog_option( $id, 'blogname' ),
+				'home'    => untrailingslashit( get_blog_option( $id, 'home' ) ),
+				'siteurl' => untrailingslashit( get_blog_option( $id, 'siteurl' ) ),
+			);
+		}
+		return array(
+			'subdomain' => is_subdomain_install(),
+			'domain'    => $network->domain,
+			'path'      => $network->path,
+			'main'      => (int) get_main_site_id(),
+			'sites'     => $sites,
 		);
 	}
 }

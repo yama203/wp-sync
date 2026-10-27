@@ -88,6 +88,9 @@ class WPS_Job {
 		if ( $src['siteurl'] !== $src['home'] ) {
 			$pairs[] = array( $src['siteurl'], $dst['siteurl'] );
 		}
+		foreach ( self::site_pairs( $src, $dst ) as $pair ) {
+			$pairs[] = $pair;
+		}
 		$pairs[] = array( $src['content_url'], $dst['content_url'] );
 		$pairs[] = array( $src['abspath'], $dst['abspath'] );
 		return array_values(
@@ -98,6 +101,105 @@ class WPS_Job {
 				}
 			)
 		);
+	}
+
+	/**
+	 * マルチサイトで、送り元の各サイトが送り先でどのドメイン・パス・URL になるか。
+	 *
+	 * ふつうは、ネットワークのドメインとパスを付け替えて作る（https://example.com/door/ → http://localhost:10898/door/）。
+	 * 送り先に同じ ID で同じ場所（パスかサブドメイン）のサイトがあるか、どちらかが別のドメインを当てているサイトなら、送り先のそのサイトに合わせる。
+	 *
+	 * @return array<int,array{id:int,src_home:string,src_siteurl:string,domain:string,path:string,home:string,siteurl:string,same:bool}>
+	 */
+	public static function map_sites( array $src, array $dst ) {
+		if ( empty( $src['network'] ) || empty( $dst['network'] ) ) {
+			return array();
+		}
+		$sn     = $src['network'];
+		$dn     = $dst['network'];
+		$scheme = wp_parse_url( $dst['home'], PHP_URL_SCHEME ) ?: 'http';
+		$by_id  = array();
+		foreach ( $dn['sites'] as $site ) {
+			$by_id[ (int) $site['id'] ] = $site;
+		}
+
+		$out = array();
+		foreach ( $sn['sites'] as $site ) {
+			$id   = (int) $site['id'];
+			$rel  = self::site_rel( $site, $sn );
+			$same = isset( $by_id[ $id ] ) && ( null === $rel || self::site_rel( $by_id[ $id ], $dn ) === $rel || null === self::site_rel( $by_id[ $id ], $dn ) );
+			if ( $same ) {
+				$to = $by_id[ $id ];
+				$domain  = $to['domain'];
+				$path    = $to['path'];
+				$home    = $to['home'];
+				$siteurl = $to['siteurl'];
+			} else {
+				$to = null;
+				if ( $dn['subdomain'] ) {
+					// サブドメイン型。sub.送り元のドメイン → sub.送り先のドメイン。別のドメインを当てているサイトはそのまま。
+					$suffix = '.' . $sn['domain'];
+					$domain = substr( $site['domain'], -strlen( $suffix ) ) === $suffix
+						? substr( $site['domain'], 0, -strlen( $suffix ) ) . '.' . $dn['domain']
+						: $site['domain'];
+					$path   = $site['path'];
+				} elseif ( null === $rel ) {
+					$domain = $site['domain'];
+					$path   = $site['path'];
+				} else {
+					$domain = $dn['domain'];
+					$path   = $dn['path'] . $rel;
+				}
+				$home    = $scheme . '://' . $domain . untrailingslashit( $path );
+				$siteurl = 0 === strpos( $site['siteurl'], $site['home'] ) ? $home . substr( $site['siteurl'], strlen( $site['home'] ) ) : $home;
+			}
+			$out[] = array(
+				'id'          => $id,
+				'src_home'    => $site['home'],
+				'src_siteurl' => $site['siteurl'],
+				'domain'      => $domain,
+				'path'        => $path,
+				'home'        => $home,
+				'siteurl'     => $siteurl,
+				// 送り先の同じサイトに合わせたか（そのときは送り先の home・siteurl を残す）。
+				'same'        => null !== $to,
+			);
+		}
+		return $out;
+	}
+
+	/**
+	 * ネットワークの中でのサイトの場所（サブディレクトリ型はパス、サブドメイン型はサブドメイン）。別のドメインを当てているサイトは null。
+	 */
+	private static function site_rel( array $site, array $network ) {
+		if ( $network['subdomain'] ) {
+			$suffix = '.' . $network['domain'];
+			if ( $site['domain'] === $network['domain'] ) {
+				return '';
+			}
+			return substr( $site['domain'], -strlen( $suffix ) ) === $suffix ? substr( $site['domain'], 0, -strlen( $suffix ) ) : null;
+		}
+		if ( $site['domain'] !== $network['domain'] || 0 !== strpos( $site['path'], $network['path'] ) ) {
+			return null;
+		}
+		return (string) substr( $site['path'], strlen( $network['path'] ) );
+	}
+
+	/**
+	 * メイン以外のサイトの URL の組（メインのサイトの URL の置換だけでは合わないものを拾う）。
+	 */
+	private static function site_pairs( array $src, array $dst ) {
+		$pairs = array();
+		foreach ( self::map_sites( $src, $dst ) as $site ) {
+			if ( $site['id'] === (int) $src['network']['main'] ) {
+				continue;
+			}
+			$pairs[] = array( $site['src_home'], $site['home'] );
+			if ( $site['src_siteurl'] !== $site['src_home'] ) {
+				$pairs[] = array( $site['src_siteurl'], $site['siteurl'] );
+			}
+		}
+		return $pairs;
 	}
 
 	/**
@@ -115,6 +217,7 @@ class WPS_Job {
 			throw new Exception( '送るものを選んでください。' );
 		}
 
+		WPS_Settings::assert_main_site();
 		$remote = WPS_Endpoint::remote();
 		$rinfo  = $remote->call( 'info' );
 		$linfo  = WPS_Server::info();
@@ -122,14 +225,22 @@ class WPS_Job {
 		if ( (int) $rinfo['api'] !== WPS_API_VERSION ) {
 			throw new Exception( sprintf( '接続先の WP Sync のバージョン（%s）がこのサイト（%s）と合いません。両方を同じバージョンにしてください。', $rinfo['version'], WPS_VERSION ) );
 		}
-		if ( $rinfo['multisite'] || $linfo['multisite'] ) {
-			throw new Exception( 'マルチサイトにはまだ対応していません。' );
+		if ( (bool) $rinfo['multisite'] !== (bool) $linfo['multisite'] ) {
+			throw new Exception( 'シングルサイトとマルチサイトの間では同期できません（' . ( $linfo['multisite'] ? 'このサイトがマルチサイト、接続先がシングルサイト' : 'このサイトがシングルサイト、接続先がマルチサイト' ) . 'です）。' );
+		}
+		if ( $linfo['multisite'] ) {
+			if ( $rinfo['network']['subdomain'] !== $linfo['network']['subdomain'] ) {
+				throw new Exception( 'サブドメイン型とサブディレクトリ型のマルチサイトの間では同期できません。' );
+			}
+			if ( $rinfo['network']['main'] !== $linfo['network']['main'] ) {
+				throw new Exception( 'メインのサイトの ID が両方で違うので同期できません。' );
+			}
 		}
 		if ( 'pull' === $direction && ! $rinfo['allow_pull'] ) {
-			throw new Exception( '接続先で pull が許可されていません。接続先の「ツール → WP Sync」で許可してください。' );
+			throw new Exception( '接続先で pull が許可されていません。接続先の WP Sync の「このサイトの設定」で許可してください。' );
 		}
 		if ( 'push' === $direction && ! $rinfo['allow_push'] ) {
-			throw new Exception( '接続先で push が許可されていません。接続先の「ツール → WP Sync」で「このサイトへの push を許可」をオンにしてください。' );
+			throw new Exception( '接続先で push が許可されていません。接続先の WP Sync の「このサイトの設定」で「このサイトへ push するのを許可する」をオンにしてください。' );
 		}
 
 		$src = 'pull' === $direction ? $rinfo : $linfo;
@@ -202,7 +313,13 @@ class WPS_Job {
 				'keep_active' => ! empty( $opts['keep_active_plugins'] ),
 				'dst_home'    => $dst['home'],
 				'src_prefix'  => $src['prefix'],
-				'pairs'       => WPS_Replacer::build_pairs( $src, $dst, $extra ),
+				'pairs'       => WPS_Replacer::build_pairs( $src, $dst, $extra, self::site_pairs( $src, $dst ) ),
+				'sites'       => array_map(
+					function ( $site ) {
+						return array( $site['id'], $site['domain'], $site['path'], $site['same'] );
+					},
+					self::map_sites( $src, $dst )
+				),
 				// 接続先の post_max_size に収まる大きさで送る。
 				'chunk'       => (int) max( 262144, min( WPS_Files::CHUNK_BYTES, ( (int) $rinfo['post_max'] ?: WPS_Files::CHUNK_BYTES * 4 ) / 3 ) ),
 				'stages'      => $stages,
@@ -432,6 +549,7 @@ class WPS_Job {
 						'src_prefix' => $d['src_prefix'],
 						'src_home'   => $d['src_home'],
 						'keep_active_plugins' => ! empty( $d['keep_active'] ),
+						'sites'      => isset( $d['sites'] ) ? $d['sites'] : array(),
 					)
 				);
 				$this->log( 'DB を入れ替えました。入れ替える前の DB はバックアップとして残しています。' );

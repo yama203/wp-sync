@@ -147,7 +147,7 @@ class WPS_CLI {
 		$remote = ! empty( $assoc['remote'] );
 		WP_CLI::confirm( ( $remote ? '接続先' : 'このサイト' ) . 'の DB を戻します。よろしいですか？', $assoc );
 		try {
-			$result = $remote ? WPS_Endpoint::remote()->call( 'restore' ) : WPS_DB::restore();
+			$result = $remote ? WPS_Endpoint::remote()->call( 'restore' ) : WPS_Server::dispatch( 'restore', array(), false );
 		} catch ( Exception $e ) {
 			WP_CLI::error( $e->getMessage() );
 		}

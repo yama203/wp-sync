@@ -35,6 +35,21 @@
 	color: var(--wps-muted);
 }
 
+.wps-network-note {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	margin: 12px 0 0;
+	padding: 8px 12px;
+	border-radius: var(--wps-radius);
+	background: var(--wps-accent-soft);
+	color: #1d2327;
+}
+
+.wps-network-note .dashicons {
+	color: var(--wps-accent);
+}
+
 .wps-tabs {
 	margin: 16px 0 0;
 }

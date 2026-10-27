@@ -1,0 +1,13 @@
+{
+	"core": "https://wordpress.org/latest.zip",
+	"phpVersion": "8.3",
+	"multisite": true,
+	"plugins": [ "../../wp-sync" ],
+	"config": {
+		"WP_DEBUG": true,
+		"WPS_DISABLE_UPDATER": true,
+		"SUNRISE": true
+	},
+	"port": 10838,
+	"testsPort": 11838
+}

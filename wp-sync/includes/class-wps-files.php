@@ -393,13 +393,21 @@ class WPS_Files {
 		if ( ! function_exists( 'get_plugins' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/plugin.php';
 		}
+		// マルチサイトでは、どれかのサイトで使っていれば「有効」とする。
+		$used = array( get_stylesheet(), get_template() );
+		if ( is_multisite() ) {
+			foreach ( get_sites( array( 'number' => 0, 'fields' => 'ids' ) ) as $id ) {
+				$used[] = get_blog_option( $id, 'stylesheet' );
+				$used[] = get_blog_option( $id, 'template' );
+			}
+		}
 		$themes = array();
 		foreach ( wp_get_themes() as $slug => $theme ) {
 			$themes[] = array(
 				'slug'    => (string) $slug,
 				'name'    => $theme->get( 'Name' ),
 				'version' => $theme->get( 'Version' ),
-				'active'  => get_stylesheet() === $slug || get_template() === $slug,
+				'active'  => in_array( (string) $slug, $used, true ),
 			);
 		}
 		$plugins = array();

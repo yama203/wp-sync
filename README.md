@@ -14,6 +14,17 @@
 
 pull で DB を取り込むと、ローカルのユーザーは本番のものになるので、終わったら本番のユーザーでログインし直す。
 
+### マルチサイト
+
+ネットワーク全体（すべてのサイトの DB・uploads・テーマ・プラグイン）をまとめて同期する。1 つのサイトだけを送ることはまだできない。
+
+- WP Sync はネットワークで有効化する。画面は「ネットワーク管理 → 設定 → WP Sync」。接続キーと許可はネットワークに 1 つ（メインのサイトの options に置く）。
+- 両方ともマルチサイトで、同じ型（サブディレクトリ型どうし、サブドメイン型どうし）のときだけ同期できる。シングルサイトとマルチサイトの間はできない。
+- 接続 URL はメインのサイトの URL。サブサイトの URL で呼ばれたら断る。
+- 送り元の各サイトは、送り先でネットワークのドメインとパスを付け替えた場所になる（`https://example.com/door/` → `http://localhost:10898/door/`）。送り先に同じ ID・同じ場所のサイトがあれば、そのサイトの home・siteurl を残す。別のドメインを当てているサイトは送り先の同じ ID のサイトに合わせる（なければドメインはそのまま）。
+- `wp_site` のドメイン（wp-config.php の `DOMAIN_CURRENT_SITE` と合わせる必要がある）と `wp_sitemeta` の siteurl は送り先のものを残す。「有効化しているプラグインの設定は送らない」では、ネットワークで有効なプラグイン（`active_sitewide_plugins`）と各サイトの `active_plugins` を残す。
+- 送り先にだけあるサイトのテーブル（`wp_4_posts` など）は、同じ ID でサイトを作ったときに混ざらないよう、バックアップ（`wpsbak_`）に回す。「元に戻す」で戻る。
+
 ### WP-CLI
 
 ```
@@ -53,7 +64,7 @@ wp sync restore [--remote] [--yes]            # 直前の取り込みの前に�
 
 ## まだできないこと
 
-- マルチサイト
+- マルチサイトの 1 サイトだけの同期（サイト単位、シングルサイトとサブサイトの間の移行）
 - mu-plugins の同期
 - 一部のテーブルだけを選んで送ること
 - 止まったところからの再開（もう一度始めると最初から）
@@ -73,3 +84,12 @@ npx wp-env run cli wp sync connect "$(npx wp-env run tests-cli wp sync key | tai
 ```
 
 `tests/check.php` は、テストで同期した結果を見るためのもの。
+
+マルチサイトのテスト環境は `tests/multisite/`（http://localhost:10838 がローカル役、http://localhost:11838 が本番役。どちらもサブディレクトリ型）。
+
+```
+cd tests/multisite
+../../node_modules/.bin/wp-env start
+./setup.sh   # 起動のたびに。.htaccess と、host.docker.internal で来た要求を localhost として扱う sunrise.php を入れる
+../../node_modules/.bin/wp-env run cli wp sync connect "<本番役の wp sync key>" --connect-url=http://host.docker.internal:11838
+```
