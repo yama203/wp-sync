@@ -25,4 +25,4 @@ fi
 echo "WP Sync $version で Release を作ります（タグ $tag）。"
 git tag -a "$tag" -m "WP Sync $version"
 git push origin HEAD "$tag"
-echo "push しました。1〜2 分で GitHub の Release に ZIP が付き、各サイトの「更新」に出ます（確認は 6 時間ごと。「更新」画面の「もう一度確認する」ですぐ確認）。"
+echo "push しました。1〜2 分で GitHub の Release に ZIP が付き、各サイトの「更新」に出ます（各サイトの確認は 3 時間ごと。「更新」画面の「もう一度確認する」や Site Hub の「今すぐ取得」ですぐ確認）。"

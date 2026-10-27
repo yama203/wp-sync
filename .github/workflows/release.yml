@@ -1,5 +1,5 @@
 # v0.2.0 のようなタグを push すると、Release を作って wp-sync-{版}.zip を添付する。
-# 各サイトの WP Sync はこの Release を見て、WordPress の「更新」に出す。
+# 各サイトの WP Sync は、添付の wp-sync.json で最新の版を知り、WordPress の「更新」に出す。
 name: Release
 
 on:
@@ -48,3 +48,18 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/*.zip \
             --title "WP Sync ${{ steps.version.outputs.version }}" \
             --generate-notes
+
+      # 各サイトの WP Sync は、releases/latest/download/wp-sync.json から最新の版を読む
+      # （GitHub の API は IP ごとの回数の上限があり、共用サーバーではすぐに当たるため）。
+      - name: 版の情報（wp-sync.json）を添付する
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --json url,name,body,publishedAt > release.json
+          jq --arg version "$VERSION" \
+            --arg package "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/wp-sync-${VERSION}.zip" \
+            '{version: $version, package: $package, url: .url, name: .name, body: .body, published_at: .publishedAt}' \
+            release.json > dist/wp-sync.json
+          cat dist/wp-sync.json
+          gh release upload "$GITHUB_REF_NAME" dist/wp-sync.json

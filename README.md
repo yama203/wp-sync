@@ -41,13 +41,13 @@ wp sync restore [--remote] [--yes]            # 直前の取り込みの前に�
 
 ## 更新
 
-公開リポジトリ [yama203/wp-sync](https://github.com/yama203/wp-sync) の Release から更新する。プラグインのヘッダーに `Update URI: https://github.com/yama203/wp-sync` を書いているので、WordPress は wordpress.org に問い合わせず、`update_plugins_github.com` のフィルターで WP Sync が最新の Release（6 時間キャッシュ）を返す。管理画面の「更新」・`wp plugin update wp-sync`・Site Hub の更新で、そのまま更新できる。
+公開リポジトリ [yama203/wp-sync](https://github.com/yama203/wp-sync) の Release から更新する。プラグインのヘッダーに `Update URI: https://github.com/yama203/wp-sync` を書いているので、WordPress は wordpress.org に問い合わせず、`update_plugins_github.com` のフィルターで WP Sync が最新の Release を返す。最新の版は Release に添付した `wp-sync.json`（`releases/latest/download/wp-sync.json`）から読む。GitHub の API は認証なしだと IP ごとに 1 時間 60 回までで、共用サーバーでは同じ IP のほかの利用者と分け合うため、API は `wp-sync.json` がないときだけ使う。結果は 3 時間覚えておき、WordPress の更新情報が消されたとき（「もう一度確認する」・Site Hub の「今すぐ取得」）は一緒に消す。管理画面の「更新」・`wp plugin update wp-sync`・Site Hub の更新で、そのまま更新できる。
 
 リリースの流れ：
 
 1. `wp-sync/wp-sync.php` のヘッダーの `Version` と `WPS_VERSION` を上げてコミットする（サイト間の通信の形を変えたら `WPS_API_VERSION` も上げる。両側の版が違うと同期しない）
 2. `npm run release`（`v{版}` のタグを push する）
-3. GitHub Actions（`.github/workflows/release.yml`）が Release を作り、`wp-sync-{版}.zip` を添付する
+3. GitHub Actions（`.github/workflows/release.yml`）が Release を作り、`wp-sync-{版}.zip` と `wp-sync.json`（版と ZIP の URL）を添付する
 
 このフォルダの wp-env はソースを直接マウントしているので、`.wp-env.json` で `WPS_DISABLE_UPDATER` を true にして更新を止めている（更新するとソースが消えるため）。
 
