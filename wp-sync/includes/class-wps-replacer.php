@@ -66,7 +66,14 @@ class WPS_Replacer {
 			$from    = untrailingslashit( $url[0] );
 			$to      = untrailingslashit( $url[1] );
 			$pairs[] = array( $from, $to, $url[2] );
-			// http / https が混ざっていても拾えるよう、スキームを除いた形も置き換える。
+			// http / https が混ざっていても、送り先のスキームにそろえる。サイトの URL の設定が http なのに、本文には https で書いて
+			// あることがある（その逆も）。スキームを除いた形の置換だけだと、送り元のスキームが残る
+			// （https://kinoko.example.com → https://kinoko.localhost:10856 になり、ローカルでつながらない。0.4.2 で修正）。
+			if ( preg_match( '#^(https?)://#i', $from, $m ) ) {
+				$other   = ( 'https' === strtolower( $m[1] ) ? 'http' : 'https' ) . substr( $from, strlen( $m[1] ) );
+				$pairs[] = array( $other, $to, $url[2] );
+			}
+			// プロトコルを省いた形（//example.com）も置き換える。
 			$pairs[] = array( self::strip_scheme( $from ), self::strip_scheme( $to ), $url[2] );
 		}
 
