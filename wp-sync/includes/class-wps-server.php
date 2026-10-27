@@ -28,6 +28,8 @@ class WPS_Server {
 		'import_finalize' => 'push',
 		'files_put'       => 'push',
 		'files_delete'    => 'push',
+		'code_begin'      => 'push',
+		'code_commit'     => 'push',
 		'restore'         => 'push',
 	);
 
@@ -133,13 +135,17 @@ class WPS_Server {
 			case 'restore':
 				return WPS_DB::restore();
 			case 'files_list':
-				return WPS_Files::list_files();
+				return WPS_Files::list_files( $args );
 			case 'files_get':
 				return WPS_Files::get( $args );
 			case 'files_put':
 				return WPS_Files::put( $args );
 			case 'files_delete':
 				return WPS_Files::delete( $args );
+			case 'code_begin':
+				return WPS_Files::code_begin( $args );
+			case 'code_commit':
+				return WPS_Files::code_commit( $args );
 		}
 	}
 
@@ -161,6 +167,7 @@ class WPS_Server {
 			'prefix'      => $wpdb->base_prefix,
 			'multisite'   => is_multisite(),
 			'tables'      => WPS_DB::tables(),
+			'code'        => WPS_Files::code_items(),
 			'allow_pull'  => WPS_Settings::allow_pull(),
 			'allow_push'  => WPS_Settings::allow_push(),
 			'backup'      => WPS_DB::backup_info(),

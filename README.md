@@ -1,6 +1,6 @@
 # WP Sync
 
-ローカルと本番の WordPress の間で、データベースとメディア（uploads）を pull / push で同期する自作プラグイン。WP Migrate Pro の代わり。
+ローカルと本番の WordPress の間で、データベース・メディア（uploads）・テーマ・プラグインを pull / push で同期する自作プラグイン。WP Migrate Pro の代わり。
 
 ## 使い方
 
@@ -9,6 +9,7 @@
 3. ローカルの「ツール → WP Sync」に接続キーを貼り付けて「接続する」。
    - wp-env のローカルからは、接続キーの URL のままでつながる（本番は外のサイトなので）。
 4. Pull（本番 → ローカル）か Push（ローカル → 本番）を選び、DB とメディアのどちらを送るかを選んで始める。
+   - テーマ・プラグインは、チェックを入れると一覧が出るので、送るものを選ぶ。プラグインは「送り先にもあって版が違うもの」に初めからチェックが入る。テーマは Git で管理していることが多いので、初めは何も選ばない
    - 「有効化しているプラグインの設定は送らない」（初期値オン）は、送り先で有効なプラグインをそのまま残す（WP Migrate の「active_plugins を移行しない」と同じ）。オフにすると、送り元の有効・無効がそのまま送り先に入る。
 
 pull で DB を取り込むと、ローカルのユーザーは本番のものになるので、終わったら本番のユーザーでログインし直す。
@@ -19,8 +20,8 @@ pull で DB を取り込むと、ローカルのユーザーは本番のもの�
 wp sync key                                   # このサイトの接続キー
 wp sync connect <key> [--connect-url=<url>]   # 接続先を設定
 wp sync allow --pull=yes --push=no            # 相手に許可する操作
-wp sync pull [--no-db] [--no-media] [--delete-media] [--no-keep-active-plugins] [--replace='前=>後'] [--yes]
-wp sync push [--no-db] [--no-media] [--delete-media] [--no-keep-active-plugins] [--replace='前=>後'] [--yes]
+wp sync pull [--no-db] [--no-media] [--delete-media] [--themes=<名前,…|all>] [--plugins=<名前,…|all>] [--no-keep-active-plugins] [--replace='前=>後'] [--yes]
+wp sync push [--no-db] [--no-media] [--delete-media] [--themes=<名前,…|all>] [--plugins=<名前,…|all>] [--no-keep-active-plugins] [--replace='前=>後'] [--yes]
 wp sync restore [--remote] [--yes]            # 直前の取り込みの前に戻す
 ```
 
@@ -34,6 +35,8 @@ wp sync restore [--remote] [--yes]            # 直前の取り込みの前に�
   - このプラグインの設定（接続キー・接続先・許可）と home・siteurl は送り先のものを残し、プラグインが有効なままになるようにする。WordPress をフォルダに置いているサイト（siteurl が home/wp など）でも、`/wp` は `/wp/…` か値全体のときだけ置き換える（`/wp-content` に引っかからない）。
   - 入れ替える前のテーブルは `wpsbak_` で始まる名前で 1 回分だけ残す（「元に戻す」で戻せる）。送り先にしかないテーブルはそのまま残る。
 - **メディア**: 両方の uploads の一覧（大きさと更新日時）を比べ、違うものだけを送る。大きなファイルは 2MB ずつに分ける。送ったファイルは更新日時を送り元に合わせるので、次は送らない。PHP などの実行できるファイルと `.htaccess` は送らない。
+- **テーマ・プラグイン**: 選んだものだけ、フォルダの中のファイル（大きさと更新日時）を比べ、違うものを送る。送り先では `wp-content/wps-stage/` にいったん置き、全部届いてから一度に入れ替える（送っている途中で古いファイルと新しいファイルが混ざらない）。送り元にないファイルは消す。上書き・削除したファイルは `wp-content/wps-old/` に 1 回分だけ残す（手で戻すとき用）。`.git`・`.svn`・`node_modules` は送らず、送り先にあっても消さない。WP Sync 自身は送らない。有効・無効は変えない。
+- 順番はテーマ・プラグイン → メディア → DB（pull で DB を入れ替えるとログインし直しになるので、DB を最後にする）。
 - 途中の状態は送る側の `uploads/wp-sync/` に置く（ウェブから読めないようにしている）。
 
 ## 更新
@@ -51,7 +54,7 @@ wp sync restore [--remote] [--yes]            # 直前の取り込みの前に�
 ## まだできないこと
 
 - マルチサイト
-- テーマ・プラグインのファイルの同期（GH Deployer でやる）
+- mu-plugins の同期
 - 一部のテーブルだけを選んで送ること
 - 止まったところからの再開（もう一度始めると最初から）
 

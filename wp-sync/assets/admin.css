@@ -308,6 +308,118 @@
 	cursor: default;
 }
 
+/* ---------- テーマ・プラグインの一覧 ---------- */
+
+.wps-code {
+	margin: 0 14px 12px 40px;
+	border: 1px solid #f0f0f1;
+	border-radius: 6px;
+	background: var(--wps-soft);
+}
+
+.wps-code[hidden] {
+	display: none;
+}
+
+.wps-code-head {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 12px;
+	padding: 8px 12px;
+	border-bottom: 1px solid #f0f0f1;
+	font-size: 12px;
+	color: var(--wps-muted);
+}
+
+.wps-code-tools {
+	display: flex;
+	gap: 12px;
+}
+
+.wps-code-tools .button-link {
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.wps-code-items {
+	max-height: 280px;
+	overflow: auto;
+	margin: 0;
+	padding: 4px 0;
+	background: #fff;
+	border-radius: 0 0 6px 6px;
+}
+
+.wps-code-item {
+	margin: 0;
+}
+
+.wps-code-item label {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 12px;
+	cursor: pointer;
+}
+
+.wps-code-item label:hover {
+	background: var(--wps-accent-soft);
+}
+
+.wps-code-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wps-code-slug {
+	margin-left: 8px;
+	font-family: Consolas, Monaco, monospace;
+	font-size: 11px;
+	color: var(--wps-muted);
+}
+
+.wps-code-state {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 6px;
+}
+
+.wps-code-ver {
+	min-width: 92px;
+	font-family: Consolas, Monaco, monospace;
+	font-size: 11px;
+	color: var(--wps-muted);
+	text-align: right;
+}
+
+.wps-badge {
+	padding: 1px 7px;
+	border-radius: 999px;
+	font-size: 11px;
+	background: #f0f0f1;
+	color: var(--wps-muted);
+}
+
+.wps-badge.is-diff {
+	background: #fcf9e8;
+	color: #996800;
+}
+
+.wps-badge.is-new {
+	background: var(--wps-accent-soft);
+	color: var(--wps-accent);
+}
+
+.wps-badge.is-active {
+	background: #edfaef;
+	color: #007017;
+}
+
 /* ---------- 置換 ---------- */
 
 .wps-details {
@@ -563,5 +675,23 @@
 	.wps-backup-info {
 		grid-column: 1 / -1;
 		grid-row: 2;
+	}
+
+	.wps-code {
+		margin-left: 14px;
+	}
+
+	.wps-code-item label {
+		flex-wrap: wrap;
+	}
+
+	.wps-code-state {
+		width: 100%;
+		padding-left: 26px;
+	}
+
+	.wps-code-ver {
+		min-width: 0;
+		text-align: left;
 	}
 }

@@ -5,7 +5,7 @@
  * 画面（または WP-CLI）から step() を何度も呼び、1 回ごとに少しずつ進める。
  * 途中の状態は uploads/wp-sync/ のファイルに置く（pull で DB を入れ替えても消えないように）。
  *
- * 順番はメディア → DB。pull では最後に DB を入れ替えるとこのサイトのユーザーも入れ替わり、
+ * 順番はテーマ・プラグイン → メディア → DB。pull では最後に DB を入れ替えるとこのサイトのユーザーも入れ替わり、
  * ログインし直すことになるので、DB の入れ替えを必ず最後にする。
  */
 
@@ -19,6 +19,9 @@ class WPS_Job {
 	const STEP_SECONDS = 8;
 
 	const STAGE_LABELS = array(
+		'code_scan'    => 'テーマ・プラグインのファイルを比べています',
+		'code_copy'    => 'テーマ・プラグインを送っています',
+		'code_commit'  => 'テーマ・プラグインを入れ替えています',
 		'media_scan'   => 'メディアの一覧を比べています',
 		'media_copy'   => 'メディアを送っています',
 		'media_delete' => '送り元にないメディアを消しています',
@@ -99,14 +102,17 @@ class WPS_Job {
 
 	/**
 	 * @param array $opts direction: pull|push, db: bool, media: bool, media_delete: bool, pairs: 足す置換 [[from, to], ...],
-	 *                    keep_active_plugins: 有効化しているプラグインの設定を送らない（送り先のものを残す）
+	 *                    keep_active_plugins: 有効化しているプラグインの設定を送らない（送り先のものを残す）、
+	 *                    themes / plugins: 送るテーマ・プラグインの名前（フォルダ名）の配列
 	 */
 	public static function start( array $opts ) {
 		$direction = isset( $opts['direction'] ) && 'push' === $opts['direction'] ? 'push' : 'pull';
 		$do_db     = ! empty( $opts['db'] );
 		$do_media  = ! empty( $opts['media'] );
-		if ( ! $do_db && ! $do_media ) {
-			throw new Exception( 'DB とメディアのどちらかを選んでください。' );
+		$themes    = array_values( array_unique( array_filter( array_map( 'strval', isset( $opts['themes'] ) ? (array) $opts['themes'] : array() ) ) ) );
+		$plugins   = array_values( array_unique( array_filter( array_map( 'strval', isset( $opts['plugins'] ) ? (array) $opts['plugins'] : array() ) ) ) );
+		if ( ! $do_db && ! $do_media && ! $themes && ! $plugins ) {
+			throw new Exception( '送るものを選んでください。' );
 		}
 
 		$remote = WPS_Endpoint::remote();
@@ -150,7 +156,28 @@ class WPS_Job {
 			throw new Exception( '送り元に options テーブルが見つかりません。' );
 		}
 
+		// 送り元にあるテーマ・プラグインだけを送る。
+		$code = array();
+		foreach ( array( 'themes' => $themes, 'plugins' => $plugins ) as $root => $slugs ) {
+			$names = array();
+			foreach ( $src['code'][ $root ] as $item ) {
+				$names[ $item['slug'] ] = $item['name'];
+			}
+			foreach ( $slugs as $slug ) {
+				WPS_Files::check_slug( $slug );
+				if ( ! isset( $names[ $slug ] ) ) {
+					throw new Exception( sprintf( '送り元に%s「%s」がありません。', 'themes' === $root ? 'テーマ' : 'プラグイン', $slug ) );
+				}
+				$code[] = array( $root, $slug, $names[ $slug ] );
+			}
+		}
+
 		$stages = array();
+		if ( $code ) {
+			$stages[] = 'code_scan';
+			$stages[] = 'code_copy';
+			$stages[] = 'code_commit';
+		}
 		if ( $do_media ) {
 			$stages[] = 'media_scan';
 			$stages[] = 'media_copy';
@@ -192,6 +219,9 @@ class WPS_Job {
 				'bytes_done'  => 0,
 				'deletes'     => array(),
 				'di'          => 0,
+				'code'        => $code,
+				'ci'          => 0,
+				'changed'     => array(),
 				'log'         => array(),
 				'errors'      => array(),
 			)
@@ -255,7 +285,7 @@ class WPS_Job {
 				$deletes = array();
 				foreach ( $from as $rel => $meta ) {
 					if ( ! isset( $to[ $rel ] ) || $to[ $rel ][0] !== $meta[0] || $to[ $rel ][1] !== $meta[1] ) {
-						$queue[] = array( (string) $rel, $meta[0], $meta[1] );
+						$queue[] = array( (string) $rel, $meta[0], $meta[1], 'uploads' );
 						$total  += $meta[0];
 					}
 				}
@@ -265,7 +295,10 @@ class WPS_Job {
 					}
 				}
 				$d['queue']       = $queue;
+				$d['qi']          = 0;
+				$d['qoffset']     = 0;
 				$d['bytes_total'] = $total;
+				$d['bytes_done']  = 0;
 				$d['deletes']     = $deletes;
 				$this->log( sprintf( 'メディア: 送り元 %d 件、送り先 %d 件。送るもの %d 件（%s）。', count( $from ), count( $to ), count( $queue ), size_format( $total, 1 ) ) );
 				if ( in_array( 'media_delete', $d['stages'], true ) ) {
@@ -274,43 +307,61 @@ class WPS_Job {
 				$this->next_stage();
 				return;
 
+			case 'code_scan':
+				list( $root, $slug, $name ) = $d['code'][ $d['ci'] ];
+				$label                      = ( 'themes' === $root ? 'テーマ' : 'プラグイン' ) . '「' . $name . '」';
+				$from                       = $src->call( 'files_list', array( 'root' => $root, 'sub' => $slug ) );
+				$to                         = $dst->call( 'files_list', array( 'root' => $root, 'sub' => $slug ) );
+				$from                       = $from['files'];
+				$to                         = $to['files'];
+				$send                       = 0;
+				$bytes                      = 0;
+				foreach ( $from as $rel => $meta ) {
+					if ( ! isset( $to[ $rel ] ) || $to[ $rel ][0] !== $meta[0] || $to[ $rel ][1] !== $meta[1] ) {
+						$d['queue'][]       = array( (string) $rel, $meta[0], $meta[1], $root );
+						$d['bytes_total']  += $meta[0];
+						$bytes             += $meta[0];
+						++$send;
+					}
+				}
+				$deletes = array_values( array_map( 'strval', array_keys( array_diff_key( $to, $from ) ) ) );
+				if ( $send || $deletes ) {
+					$dst->call( 'code_begin', array( 'root' => $root, 'slug' => $slug ) );
+					$d['changed'][] = array( $root, $slug, $deletes, $label );
+					$this->log( sprintf( '%s: %d 件（%s）を送り、%d 件を消します。', $label, $send, size_format( $bytes, 1 ), count( $deletes ) ) );
+				} else {
+					$this->log( $label . ': 変わっていません。' );
+				}
+				++$d['ci'];
+				if ( $d['ci'] >= count( $d['code'] ) ) {
+					$this->next_stage();
+				}
+				return;
+
+			case 'code_copy':
 			case 'media_copy':
-				$budget = $d['chunk'];
-				$items  = array();
-				$metas  = array();
-				while ( $d['qi'] < count( $d['queue'] ) && $budget > 0 ) {
-					list( $rel, $size, $mtime ) = $d['queue'][ $d['qi'] ];
-					$length                     = (int) min( $size - $d['qoffset'], $budget );
-					$items[]                    = array( $rel, $d['qoffset'], $length );
-					$metas[]                    = array( $size, $mtime );
-					$budget                    -= max( 1, $length );
-					if ( $d['qoffset'] + $length >= $size ) {
-						++$d['qi'];
-						$d['qoffset'] = 0;
-					} else {
-						$d['qoffset'] += $length;
-					}
-				}
-				if ( $items ) {
-					$got  = $src->call( 'files_get', array( 'items' => $items ) );
-					$puts = array();
-					foreach ( $items as $i => $item ) {
-						$chunk = isset( $got['data'][ $i ] ) ? $got['data'][ $i ] : null;
-						if ( null === $chunk || strlen( $chunk ) !== $item[2] ) {
-							// 比べた後に消えたり変わったりしたファイル。
-							$d['errors'][] = $item[0];
-							$this->log( '読めなかったので飛ばしました: ' . $item[0] );
-							continue;
-						}
-						$puts[] = array( $item[0], $item[1], $metas[ $i ][0], $metas[ $i ][1], $chunk );
-					}
-					if ( $puts ) {
-						$put              = $dst->call( 'files_put', array( 'items' => $puts ) );
-						$d['bytes_done'] += $put['bytes'];
-					}
-				}
+				$this->copy_files( $src, $dst );
 				if ( $d['qi'] >= count( $d['queue'] ) ) {
-					$this->log( 'メディアを送り終えました。' );
+					$this->log( 'code_copy' === $stage ? 'テーマ・プラグインを送り終えました。' : 'メディアを送り終えました。' );
+					$this->next_stage();
+				}
+				return;
+
+			case 'code_commit':
+				$item = array_shift( $d['changed'] );
+				if ( $item ) {
+					list( $root, $slug, $deletes, $label ) = $item;
+					$dst->call(
+						'code_commit',
+						array(
+							'root'    => $root,
+							'slug'    => $slug,
+							'deletes' => $deletes,
+						)
+					);
+					$this->log( $label . 'を入れ替えました。' );
+				}
+				if ( ! $d['changed'] ) {
 					$this->next_stage();
 				}
 				return;
@@ -318,7 +369,13 @@ class WPS_Job {
 			case 'media_delete':
 				$batch = array_slice( $d['deletes'], $d['di'], 500 );
 				if ( $batch ) {
-					$dst->call( 'files_delete', array( 'items' => $batch ) );
+					$dst->call(
+						'files_delete',
+						array(
+							'root'  => 'uploads',
+							'items' => $batch,
+						)
+					);
 					$d['di'] += count( $batch );
 				}
 				if ( $d['di'] >= count( $d['deletes'] ) ) {
@@ -383,12 +440,71 @@ class WPS_Job {
 		}
 	}
 
+	/**
+	 * 順番待ちのファイルを、決まった大きさの分だけ送る。1 回に送るのは同じ場所（root）のファイルだけ。
+	 */
+	private function copy_files( WPS_Endpoint $src, WPS_Endpoint $dst ) {
+		$d      = &$this->data;
+		$budget = $d['chunk'];
+		$items  = array();
+		$metas  = array();
+		$root   = null;
+		while ( $d['qi'] < count( $d['queue'] ) && $budget > 0 ) {
+			list( $rel, $size, $mtime, $item_root ) = $d['queue'][ $d['qi'] ];
+			if ( null !== $root && $item_root !== $root ) {
+				break;
+			}
+			$root    = $item_root;
+			$length  = (int) min( $size - $d['qoffset'], $budget );
+			$items[] = array( $rel, $d['qoffset'], $length );
+			$metas[] = array( $size, $mtime );
+			$budget -= max( 1, $length );
+			if ( $d['qoffset'] + $length >= $size ) {
+				++$d['qi'];
+				$d['qoffset'] = 0;
+			} else {
+				$d['qoffset'] += $length;
+			}
+		}
+		if ( ! $items ) {
+			return;
+		}
+		$got  = $src->call(
+			'files_get',
+			array(
+				'root'  => $root,
+				'items' => $items,
+			)
+		);
+		$puts = array();
+		foreach ( $items as $i => $item ) {
+			$chunk = isset( $got['data'][ $i ] ) ? $got['data'][ $i ] : null;
+			if ( null === $chunk || strlen( $chunk ) !== $item[2] ) {
+				// 比べた後に消えたり変わったりしたファイル。
+				$d['errors'][] = $item[0];
+				$this->log( '読めなかったので飛ばしました: ' . $item[0] );
+				continue;
+			}
+			$puts[] = array( $item[0], $item[1], $metas[ $i ][0], $metas[ $i ][1], $chunk );
+		}
+		if ( $puts ) {
+			$put              = $dst->call(
+				'files_put',
+				array(
+					'root'  => $root,
+					'items' => $puts,
+				)
+			);
+			$d['bytes_done'] += $put['bytes'];
+		}
+	}
+
 	public function status() {
 		$d     = $this->data;
 		$stage = $this->stage();
 
 		$percent = 0;
-		if ( 'media_copy' === $stage ) {
+		if ( 'media_copy' === $stage || 'code_copy' === $stage ) {
 			$percent = $d['bytes_total'] ? $d['bytes_done'] / $d['bytes_total'] : 1;
 		} elseif ( 'db_tables' === $stage ) {
 			$percent = $d['rows_total'] ? $d['rows_done'] / $d['rows_total'] : $d['table'] / max( 1, count( $d['tables'] ) );
@@ -397,7 +513,9 @@ class WPS_Job {
 		}
 
 		$detail = '';
-		if ( 'media_copy' === $stage ) {
+		if ( 'code_scan' === $stage && isset( $d['code'][ $d['ci'] ] ) ) {
+			$detail = sprintf( '%s（%d / %d 個目）', $d['code'][ $d['ci'] ][2], $d['ci'] + 1, count( $d['code'] ) );
+		} elseif ( 'media_copy' === $stage || 'code_copy' === $stage ) {
 			$detail = sprintf( '%d / %d 件（%s / %s）', $d['qi'], count( $d['queue'] ), size_format( $d['bytes_done'], 1 ), size_format( $d['bytes_total'], 1 ) );
 		} elseif ( 'db_tables' === $stage && isset( $d['tables'][ $d['table'] ] ) ) {
 			$detail = sprintf( '%s（%d / %d 個目）', $d['tables'][ $d['table'] ]['src'], $d['table'] + 1, count( $d['tables'] ) );

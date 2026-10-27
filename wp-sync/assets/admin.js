@@ -7,6 +7,9 @@
 	};
 	var info = null;
 	var running = false;
+	// 選んだテーマ・プラグイン（向きごと）。null はまだ初期値を決めていない。
+	var selected = { pull: null, push: null };
+	var ROOTS = { themes: 'テーマ', plugins: 'プラグイン' };
 
 	function request( action, data ) {
 		var body = new FormData();
@@ -112,17 +115,43 @@
 		} );
 	}
 
+	function chosenCode() {
+		var code = { themes: [], plugins: [] };
+		var sel = selected[ direction() ];
+		Object.keys( ROOTS ).forEach( function ( root ) {
+			if ( sel && $( 'wps-' + root ).checked ) {
+				code[ root ] = Object.keys( sel[ root ] ).filter( function ( slug ) {
+					return sel[ root ][ slug ];
+				} );
+			}
+		} );
+		return code;
+	}
+
+	function whatList() {
+		var code = chosenCode();
+		return [
+			$( 'wps-db' ).checked ? 'データベース' : null,
+			$( 'wps-media' ).checked ? 'メディア' : null,
+			code.themes.length ? 'テーマ ' + code.themes.length + ' 個' : null,
+			code.plugins.length ? 'プラグイン ' + code.plugins.length + ' 個' : null,
+		].filter( Boolean );
+	}
+
+	function canStart() {
+		return ! running && !! info && warnings().length === 0 && whatList().length > 0;
+	}
+
 	function summary() {
-		var db = $( 'wps-db' ).checked;
-		var media = $( 'wps-media' ).checked;
 		var target = $( 'wps-summary' );
 		target.innerHTML = '';
-		if ( ! db && ! media ) {
-			target.textContent = 'データベースとメディアのどちらかを選んでください。';
+		var list = whatList();
+		if ( ! list.length ) {
+			target.textContent = '送るものを選んでください。';
 			return;
 		}
 		var pull = direction() === 'pull';
-		var what = [ db ? 'データベース' : null, media ? 'メディア' : null ].filter( Boolean ).join( 'と' );
+		var what = list.join( '・' );
 		target.appendChild( el( 'strong', {}, pull ? '接続先' : 'このサイト' ) );
 		target.appendChild( document.createTextNode( 'の' + what + 'で、' ) );
 		target.appendChild( el( 'strong', {}, pull ? 'このサイト' : '接続先' ) );
@@ -158,12 +187,106 @@
 		countPairs();
 
 		$( 'wps-start' ).textContent = pull ? 'Pull を始める' : 'Push を始める';
-		$( 'wps-start' ).disabled = running || list.length > 0 || ( ! $( 'wps-db' ).checked && ! $( 'wps-media' ).checked );
+		renderCode();
+		$( 'wps-start' ).disabled = ! canStart();
 		syncOptions();
 		summary();
 
 		renderBackup( 'local', info.local.backup, true );
 		renderBackup( 'remote', r.backup, r.allow_push );
+	}
+
+	/* ---------- テーマ・プラグインの一覧 ---------- */
+
+	function codeLists() {
+		var pull = direction() === 'pull';
+		return {
+			src: pull ? info.remote.code : info.local.code,
+			dst: pull ? info.local.code : info.remote.code,
+		};
+	}
+
+	// 初期値：プラグインは「送り先にもあって版が違うもの」。テーマは何も選ばない（Git で管理していることが多いので）。
+	function defaults() {
+		var lists = codeLists();
+		var sel = { themes: {}, plugins: {} };
+		Object.keys( ROOTS ).forEach( function ( root ) {
+			var dst = {};
+			lists.dst[ root ].forEach( function ( item ) {
+				dst[ item.slug ] = item;
+			} );
+			lists.src[ root ].forEach( function ( item ) {
+				sel[ root ][ item.slug ] = root === 'plugins' && !! dst[ item.slug ] && dst[ item.slug ].version !== item.version;
+			} );
+		} );
+		return sel;
+	}
+
+	function renderCode() {
+		var dir = direction();
+		if ( ! selected[ dir ] ) {
+			selected[ dir ] = defaults();
+		}
+		var sel = selected[ dir ];
+		var lists = codeLists();
+
+		Object.keys( ROOTS ).forEach( function ( root ) {
+			var box = $( 'wps-' + root + '-list' );
+			box.hidden = ! $( 'wps-' + root ).checked;
+			var dst = {};
+			lists.dst[ root ].forEach( function ( item ) {
+				dst[ item.slug ] = item;
+			} );
+			var ul = box.querySelector( '.wps-code-items' );
+			ul.innerHTML = '';
+			lists.src[ root ].forEach( function ( item ) {
+				var other = dst[ item.slug ];
+				var li = el( 'li', { class: 'wps-code-item' } );
+				var label = el( 'label' );
+				var check = el( 'input', { type: 'checkbox', value: item.slug } );
+				check.checked = !! sel[ root ][ item.slug ];
+				check.disabled = running;
+				check.addEventListener( 'change', function () {
+					sel[ root ][ item.slug ] = check.checked;
+					countCode( root );
+					summary();
+					$( 'wps-start' ).disabled = ! canStart();
+				} );
+				label.appendChild( check );
+				var text = el( 'span', { class: 'wps-code-name' } );
+				text.appendChild( el( 'strong', {}, item.name || item.slug ) );
+				text.appendChild( el( 'span', { class: 'wps-code-slug' }, item.slug ) );
+				label.appendChild( text );
+
+				var state = el( 'span', { class: 'wps-code-state' } );
+				if ( ! other ) {
+					state.appendChild( el( 'span', { class: 'wps-badge is-new' }, '送り先にない' ) );
+					state.appendChild( el( 'span', { class: 'wps-code-ver' }, item.version || '' ) );
+				} else if ( other.version !== item.version ) {
+					state.appendChild( el( 'span', { class: 'wps-badge is-diff' }, '版が違う' ) );
+					state.appendChild( el( 'span', { class: 'wps-code-ver' }, ( item.version || '—' ) + ' → ' + ( other.version || '—' ) ) );
+				} else {
+					state.appendChild( el( 'span', { class: 'wps-badge' }, '同じ版' ) );
+					state.appendChild( el( 'span', { class: 'wps-code-ver' }, item.version || '' ) );
+				}
+				if ( item.active ) {
+					state.insertBefore( el( 'span', { class: 'wps-badge is-active' }, '有効' ), state.firstChild );
+				}
+				label.appendChild( state );
+				li.appendChild( label );
+				ul.appendChild( li );
+			} );
+			countCode( root );
+		} );
+	}
+
+	function countCode( root ) {
+		var sel = selected[ direction() ][ root ];
+		var total = Object.keys( sel ).length;
+		var on = Object.keys( sel ).filter( function ( slug ) {
+			return sel[ slug ];
+		} ).length;
+		$( 'wps-' + root + '-list' ).querySelector( '.wps-code-count' ).textContent = '送り元の ' + total + ' 個のうち ' + on + ' 個を送ります';
 	}
 
 	function countPairs() {
@@ -246,7 +369,7 @@
 
 	function setRunning( value ) {
 		running = value;
-		document.querySelectorAll( '.wps-direction input, .wps-options input, .wps-pairs input, .wps-pairs button, #wps-start, [data-restore]' ).forEach( function ( node ) {
+		document.querySelectorAll( '.wps-direction input, .wps-options input, .wps-pairs input, .wps-pairs button, .wps-code input, .wps-code button, #wps-start, [data-restore]' ).forEach( function ( node ) {
 			node.disabled = value;
 		} );
 		if ( ! value ) {
@@ -290,9 +413,14 @@
 		var pull = direction() === 'pull';
 		var db = $( 'wps-db' ).checked;
 		var media = $( 'wps-media' ).checked;
+		var code = chosenCode();
 		var target = pull ? 'このサイト（' + info.local.home + '）' : '接続先（' + info.remote.home + '）';
-		var what = [ db ? 'データベース' : null, media ? 'メディア' : null ].filter( Boolean ).join( 'と' );
-		var message = target + 'の' + what + 'を上書きします。';
+		var message = target + 'の' + whatList().join( '・' ) + 'を上書きします。';
+		[ [ 'themes', 'テーマ' ], [ 'plugins', 'プラグイン' ] ].forEach( function ( r ) {
+			if ( code[ r[ 0 ] ].length ) {
+				message += '\n' + r[ 1 ] + ': ' + code[ r[ 0 ] ].join( ', ' );
+			}
+		} );
 		if ( db && pull ) {
 			message += '\n終わったら、接続先のユーザーでログインし直すことになります。';
 		}
@@ -317,6 +445,7 @@
 			media: media ? '1' : '0',
 			media_delete: $( 'wps-media-delete' ).checked ? '1' : '0',
 			keep_active_plugins: $( 'wps-keep-active' ).checked ? '1' : '0',
+			code: JSON.stringify( code ),
 			pairs: JSON.stringify( extraPairs() ),
 		} )
 			.then( function ( status ) {
@@ -354,11 +483,28 @@
 		document.querySelectorAll( 'input[name="wps-direction"]' ).forEach( function ( radio ) {
 			radio.addEventListener( 'change', render );
 		} );
-		[ 'wps-db', 'wps-media', 'wps-media-delete' ].forEach( function ( id ) {
+		[ 'wps-db', 'wps-media', 'wps-media-delete', 'wps-themes', 'wps-plugins' ].forEach( function ( id ) {
 			$( id ).addEventListener( 'change', function () {
 				syncOptions();
+				Object.keys( ROOTS ).forEach( function ( root ) {
+					$( 'wps-' + root + '-list' ).hidden = ! $( 'wps-' + root ).checked;
+				} );
 				summary();
-				$( 'wps-start' ).disabled = running || ! info || warnings().length > 0 || ( ! $( 'wps-db' ).checked && ! $( 'wps-media' ).checked );
+				$( 'wps-start' ).disabled = ! canStart();
+			} );
+		} );
+		Object.keys( ROOTS ).forEach( function ( root ) {
+			$( 'wps-' + root + '-list' ).querySelectorAll( '[data-select]' ).forEach( function ( button ) {
+				button.addEventListener( 'click', function () {
+					var sel = selected[ direction() ][ root ];
+					var on = button.getAttribute( 'data-select' ) === 'all';
+					Object.keys( sel ).forEach( function ( slug ) {
+						sel[ slug ] = on;
+					} );
+					renderCode();
+					summary();
+					$( 'wps-start' ).disabled = ! canStart();
+				} );
 			} );
 		} );
 

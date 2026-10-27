@@ -80,6 +80,12 @@ class WPS_CLI {
 	 * [--delete-media]
 	 * : 送り元にないメディアを消す。
 	 *
+	 * [--themes=<names>]
+	 * : 送るテーマのフォルダ名（カンマ区切り）。all ですべて。
+	 *
+	 * [--plugins=<names>]
+	 * : 送るプラグインのフォルダ名（カンマ区切り）。all ですべて。
+	 *
 	 * [--[no-]keep-active-plugins]
 	 * : 有効化しているプラグインの設定を送らず、送り先のものを残すか（初期値は残す。--no-keep-active-plugins で送る）。
 	 *
@@ -106,6 +112,12 @@ class WPS_CLI {
 	 *
 	 * [--delete-media]
 	 * : 送り元にないメディアを消す。
+	 *
+	 * [--themes=<names>]
+	 * : 送るテーマのフォルダ名（カンマ区切り）。all ですべて。
+	 *
+	 * [--plugins=<names>]
+	 * : 送るプラグインのフォルダ名（カンマ区切り）。all ですべて。
 	 *
 	 * [--[no-]keep-active-plugins]
 	 * : 有効化しているプラグインの設定を送らず、送り先のものを残すか（初期値は残す。--no-keep-active-plugins で送る）。
@@ -160,7 +172,7 @@ class WPS_CLI {
 			WP_CLI::error( '接続先が設定されていません（wp sync connect <key>）。' );
 		}
 		$target = 'pull' === $direction ? 'このサイト' : '接続先（' . $remote['home'] . '）';
-		WP_CLI::confirm( $target . 'の' . implode( 'と', array_filter( array( $db ? 'DB' : '', $media ? 'メディア' : '' ) ) ) . 'を上書きします。よろしいですか？', $assoc );
+		WP_CLI::confirm( $target . 'の' . implode( '・', array_filter( array( $db ? 'DB' : '', $media ? 'メディア' : '', empty( $assoc['themes'] ) ? '' : 'テーマ（' . $assoc['themes'] . '）', empty( $assoc['plugins'] ) ? '' : 'プラグイン（' . $assoc['plugins'] . '）' ) ) ) . 'を上書きします。よろしいですか？', $assoc );
 
 		try {
 			$status = WPS_Job::start(
@@ -171,6 +183,8 @@ class WPS_CLI {
 					'media_delete' => ! empty( $assoc['delete-media'] ),
 					'pairs'        => $pairs,
 					'keep_active_plugins' => WP_CLI\Utils\get_flag_value( $assoc, 'keep-active-plugins', true ),
+					'themes'       => $this->code_names( $assoc, 'themes', $direction ),
+					'plugins'      => $this->code_names( $assoc, 'plugins', $direction ),
 				)
 			);
 			$this->show( $status );
@@ -182,6 +196,20 @@ class WPS_CLI {
 			WP_CLI::error( $e->getMessage() );
 		}
 		WP_CLI::success( '完了しました。' );
+	}
+
+	/**
+	 * --themes / --plugins の値を名前の配列にする。all なら送り元にあるものすべて。
+	 */
+	private function code_names( $assoc, $root, $direction ) {
+		if ( empty( $assoc[ $root ] ) ) {
+			return array();
+		}
+		if ( 'all' === $assoc[ $root ] ) {
+			$info = 'pull' === $direction ? WPS_Endpoint::remote()->call( 'info' ) : WPS_Server::info();
+			return wp_list_pluck( $info['code'][ $root ], 'slug' );
+		}
+		return array_values( array_filter( array_map( 'trim', explode( ',', $assoc[ $root ] ) ) ) );
 	}
 
 	private function show( $status ) {

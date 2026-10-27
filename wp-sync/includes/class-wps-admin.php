@@ -168,6 +168,7 @@ class WPS_Admin {
 				'allow_push' => $remote['allow_push'],
 				'size'       => $size( $remote ),
 				'backup'     => $backup( $remote ),
+				'code'       => $remote['code'],
 			),
 			'local'  => array(
 				'name'   => $local['name'],
@@ -175,6 +176,7 @@ class WPS_Admin {
 				'prefix' => $local['prefix'],
 				'size'   => $size( $local ),
 				'backup' => $backup( $local ),
+				'code'   => $local['code'],
 			),
 			'pairs'  => array(
 				'pull' => WPS_Job::preview_pairs( $remote, $local ),
@@ -187,6 +189,7 @@ class WPS_Admin {
 		self::ajax_run(
 			function () {
 				$pairs = json_decode( (string) self::post( 'pairs', '[]' ), true );
+				$code  = json_decode( (string) self::post( 'code', '{}' ), true );
 				return WPS_Job::start(
 					array(
 						'direction'    => self::post( 'direction' ),
@@ -195,6 +198,8 @@ class WPS_Admin {
 						'media_delete' => '1' === self::post( 'media_delete' ),
 						'pairs'        => is_array( $pairs ) ? $pairs : array(),
 						'keep_active_plugins' => '1' === self::post( 'keep_active_plugins' ),
+						'themes'       => isset( $code['themes'] ) ? (array) $code['themes'] : array(),
+						'plugins'      => isset( $code['plugins'] ) ? (array) $code['plugins'] : array(),
 					)
 				);
 			}
@@ -234,7 +239,7 @@ class WPS_Admin {
 		<div class="wrap wps">
 			<div class="wps-header">
 				<h1>WP Sync <span class="wps-version"><?php echo esc_html( WPS_VERSION ); ?></span></h1>
-				<p class="wps-lead">ローカルと本番の間で、データベースとメディアを同期します。</p>
+				<p class="wps-lead">ローカルと本番の間で、データベース・メディア・テーマ・プラグインを同期します。</p>
 			</div>
 
 			<?php if ( isset( $notices[ $notice ] ) ) : ?>
@@ -322,6 +327,22 @@ class WPS_Admin {
 								<input type="checkbox" id="wps-media-delete">
 								<span><strong>送り元にないメディアを送り先から消す</strong></span>
 							</label>
+							<?php foreach ( array( 'themes' => array( 'テーマ', 'テーマのフォルダの中身。Git で管理しているテーマは、上書きしてよいか気を付けてください。' ), 'plugins' => array( 'プラグイン', 'プラグインのファイル。送り先で有効にするかどうかは変えません（WP Sync 自身は送りません）。' ) ) as $root => $text ) : ?>
+								<label class="wps-option">
+									<input type="checkbox" id="wps-<?php echo esc_attr( $root ); ?>">
+									<span><strong><?php echo esc_html( $text[0] ); ?></strong><span class="wps-option-desc"><?php echo esc_html( $text[1] ); ?>違うファイルだけを送り、送り元にないファイルは消します。<code>.git</code>・<code>node_modules</code> は送りません。</span></span>
+								</label>
+								<div class="wps-code" id="wps-<?php echo esc_attr( $root ); ?>-list" hidden>
+									<div class="wps-code-head">
+										<span class="wps-code-count"></span>
+										<span class="wps-code-tools">
+											<button type="button" class="button-link" data-select="all">すべて選ぶ</button>
+											<button type="button" class="button-link" data-select="none">すべて外す</button>
+										</span>
+									</div>
+									<ul class="wps-code-items"></ul>
+								</div>
+							<?php endforeach; ?>
 						</div>
 
 						<details class="wps-details wps-pairs">
@@ -395,11 +416,11 @@ class WPS_Admin {
 						<div class="wps-options">
 							<label class="wps-option">
 								<input type="checkbox" name="allow_pull" value="1" <?php checked( WPS_Settings::allow_pull() ); ?>>
-								<span><strong>このサイトから pull するのを許可する</strong><span class="wps-option-desc">相手がこのサイトの DB とメディアを読み出せます。</span></span>
+								<span><strong>このサイトから pull するのを許可する</strong><span class="wps-option-desc">相手がこのサイトの DB・メディア・テーマ・プラグインを読み出せます。</span></span>
 							</label>
 							<label class="wps-option">
 								<input type="checkbox" name="allow_push" value="1" <?php checked( WPS_Settings::allow_push() ); ?>>
-								<span><strong>このサイトへ push するのを許可する</strong><span class="wps-option-desc">相手がこのサイトの DB とメディアを上書きできます。本番では、push するときだけオンにするのが安全です。</span></span>
+								<span><strong>このサイトへ push するのを許可する</strong><span class="wps-option-desc">相手がこのサイトの DB・メディア・テーマ・プラグインを上書きできます（プラグインの PHP も書き込めます）。本番では、push するときだけオンにするのが安全です。</span></span>
 							</label>
 						</div>
 						<div class="wps-actions"><button type="submit" class="button button-primary">保存</button></div>
