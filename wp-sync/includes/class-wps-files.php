@@ -2,8 +2,9 @@
 /**
  * ファイルの一覧・読み出し・書き込み。
  *
- * 扱う場所（root）は 3 つ。パスはすべて、その場所からの相対パスで扱い、外に出るパスは扱わない。
+ * 扱う場所（root）は 4 つ。パスはすべて、その場所からの相対パスで扱い、外に出るパスは扱わない。
  * - uploads … メディア。PHP などの実行できるファイルは扱わない
+ * - languages … 翻訳ファイル（wp-content/languages）。翻訳ファイルの形（.mo・.po・.json・.l10n.php）だけを扱う
  * - themes  … テーマ。1 つのテーマ（フォルダ）ごとに扱う
  * - plugins … プラグイン。1 つのプラグイン（フォルダか、1 つのファイル）ごとに扱う
  *
@@ -26,7 +27,10 @@ class WPS_Files {
 
 	const PART_SUFFIX = '.wpspart';
 
-	const ROOTS = array( 'uploads', 'themes', 'plugins' );
+	const ROOTS = array( 'uploads', 'themes', 'plugins', 'languages' );
+
+	/** そのまま本物の場所に書く場所（テーマ・プラグインのように 1 つずつ入れ替えない）。 */
+	const LIVE_ROOTS = array( 'uploads', 'languages' );
 
 	/** テーマ・プラグインで送らないフォルダ。 */
 	const CODE_SKIP_DIRS = array( '.git', '.svn', 'node_modules' );
@@ -56,6 +60,8 @@ class WPS_Files {
 				return untrailingslashit( wp_normalize_path( get_theme_root() ) );
 			case 'plugins':
 				return untrailingslashit( wp_normalize_path( WP_PLUGIN_DIR ) );
+			case 'languages':
+				return untrailingslashit( wp_normalize_path( WP_LANG_DIR ) );
 		}
 		return self::base();
 	}
@@ -68,6 +74,10 @@ class WPS_Files {
 		$name = strtolower( basename( $rel ) );
 		if ( substr( $rel, -strlen( self::PART_SUFFIX ) ) === self::PART_SUFFIX || '.ds_store' === $name ) {
 			return true;
+		}
+		if ( 'languages' === $root ) {
+			// 翻訳ファイルだけ（WordPress 本体の分と、plugins・themes の中の分）。
+			return ! preg_match( '#^(?:(?:plugins|themes)/)?[A-Za-z0-9._@-]+\.(?:mo|po|json|l10n\.php)$#', $rel );
 		}
 		if ( 'uploads' !== $root ) {
 			$parts = explode( '/', $rel );
@@ -103,7 +113,7 @@ class WPS_Files {
 			|| in_array( '..', explode( '/', $rel ), true ) || in_array( '.', explode( '/', $rel ), true ) || self::skipped( $rel, $root ) ) {
 			throw new Exception( '扱えないファイルのパスです: ' . $rel );
 		}
-		if ( 'uploads' !== $root ) {
+		if ( ! in_array( $root, self::LIVE_ROOTS, true ) ) {
 			// テーマ・プラグインは、その中のファイルだけ（themes/index.php などは扱わない）。
 			$slug = strtok( $rel, '/' );
 			self::check_slug( $slug );
@@ -129,7 +139,7 @@ class WPS_Files {
 		$root  = self::root( $args );
 		$base  = self::dir( $root );
 		$start = $base;
-		if ( 'uploads' !== $root ) {
+		if ( ! in_array( $root, self::LIVE_ROOTS, true ) ) {
 			$start = $base . '/' . self::check_slug( isset( $args['sub'] ) ? $args['sub'] : '' );
 		}
 
@@ -141,7 +151,7 @@ class WPS_Files {
 				$files[ $rel ] = array( (int) filesize( $start ), (int) filemtime( $start ) );
 			}
 		} elseif ( is_dir( $start ) ) {
-			$skip     = 'uploads' === $root ? array() : self::CODE_SKIP_DIRS;
+			$skip     = in_array( $root, self::LIVE_ROOTS, true ) ? array() : self::CODE_SKIP_DIRS;
 			$iterator = new RecursiveIteratorIterator(
 				new RecursiveCallbackFilterIterator(
 					new RecursiveDirectoryIterator( $start, FilesystemIterator::SKIP_DOTS | FilesystemIterator::UNIX_PATHS ),
@@ -198,7 +208,7 @@ class WPS_Files {
 	 */
 	public static function put( $args ) {
 		$root    = self::root( $args );
-		$area    = 'uploads' === $root ? 'live' : 'stage';
+		$area    = in_array( $root, self::LIVE_ROOTS, true ) ? 'live' : 'stage';
 		$written = 0;
 		foreach ( (array) $args['items'] as $item ) {
 			list( $rel, $offset, $size, $mtime, $chunk ) = $item;
@@ -331,7 +341,7 @@ class WPS_Files {
 
 	private static function code_root( $args ) {
 		$root = self::root( $args );
-		if ( 'uploads' === $root ) {
+		if ( in_array( $root, self::LIVE_ROOTS, true ) ) {
 			throw new Exception( 'テーマかプラグインを指定してください。' );
 		}
 		return $root;

@@ -25,6 +25,8 @@ class WPS_Job {
 		'media_scan'   => 'メディアの一覧を比べています',
 		'media_copy'   => 'メディアを送っています',
 		'media_delete' => '送り元にないメディアを消しています',
+		'lang_scan'    => '言語ファイルを比べています',
+		'lang_copy'    => '言語ファイルを送っています',
 		'db_begin'     => 'DB の取り込みを準備しています',
 		'db_tables'    => 'DB を送っています',
 		'db_finalize'  => 'DB を入れ替えています',
@@ -315,6 +317,9 @@ class WPS_Job {
 			}
 		}
 		if ( $do_db ) {
+			// サイトの言語（WPLANG）は DB で届くが、翻訳ファイルがないと英語のままになるので一緒に送る（0.4.4）。
+			$stages[] = 'lang_scan';
+			$stages[] = 'lang_copy';
 			$stages[] = 'db_begin';
 			$stages[] = 'db_tables';
 			$stages[] = 'db_finalize';
@@ -494,11 +499,45 @@ class WPS_Job {
 				}
 				return;
 
+			case 'lang_scan':
+				try {
+					$from = $src->call( 'files_list', array( 'root' => 'languages' ) );
+					$to   = $dst->call( 'files_list', array( 'root' => 'languages' ) );
+				} catch ( Exception $e ) {
+					// 0.4.3 までの WP Sync は言語ファイルを扱えない。つながらないなどほかのエラーは、ほかの段階と同じく止める。
+					if ( false === strpos( $e->getMessage(), '扱えない場所です' ) ) {
+						throw $e;
+					}
+					$this->log( '言語ファイルは送りませんでした（' . $e->getMessage() . '）。' );
+					$d['stage'] += 2;
+					return;
+				}
+				$queue = array();
+				$total = 0;
+				foreach ( $from['files'] as $rel => $meta ) {
+					// 送り先にないものと、送り元のほうが新しいものだけ。送り先の新しい翻訳を古いもので上書きせず、送り先にしかないものも消さない。
+					if ( ! isset( $to['files'][ $rel ] ) || ( $to['files'][ $rel ][0] !== $meta[0] && $to['files'][ $rel ][1] < $meta[1] ) ) {
+						$queue[] = array( (string) $rel, $meta[0], $meta[1], 'languages' );
+						$total  += $meta[0];
+					}
+				}
+				$d['queue']       = $queue;
+				$d['qi']          = 0;
+				$d['qoffset']     = 0;
+				$d['bytes_total'] = $total;
+				$d['bytes_done']  = 0;
+				$this->log( $queue ? sprintf( '言語ファイル: %d 件（%s）を送ります。', count( $queue ), size_format( $total, 1 ) ) : '言語ファイル: 送るものはありません。' );
+				$this->next_stage();
+				return;
+
+			case 'lang_copy':
 			case 'code_copy':
 			case 'media_copy':
 				$this->copy_files( $src, $dst );
 				if ( $d['qi'] >= count( $d['queue'] ) ) {
-					$this->log( 'code_copy' === $stage ? 'テーマ・プラグインを送り終えました。' : 'メディアを送り終えました。' );
+					if ( 'lang_copy' !== $stage || $d['queue'] ) {
+						$this->log( array( 'code_copy' => 'テーマ・プラグインを送り終えました。', 'media_copy' => 'メディアを送り終えました。', 'lang_copy' => '言語ファイルを送り終えました。' )[ $stage ] );
+					}
 					$this->next_stage();
 				}
 				return;
@@ -664,7 +703,7 @@ class WPS_Job {
 		$stage = $this->stage();
 
 		$percent = 0;
-		if ( 'media_copy' === $stage || 'code_copy' === $stage ) {
+		if ( in_array( $stage, array( 'media_copy', 'code_copy', 'lang_copy' ), true ) ) {
 			$percent = $d['bytes_total'] ? $d['bytes_done'] / $d['bytes_total'] : 1;
 		} elseif ( 'db_tables' === $stage ) {
 			$percent = $d['rows_total'] ? $d['rows_done'] / $d['rows_total'] : $d['table'] / max( 1, count( $d['tables'] ) );
@@ -675,7 +714,7 @@ class WPS_Job {
 		$detail = '';
 		if ( 'code_scan' === $stage && isset( $d['code'][ $d['ci'] ] ) ) {
 			$detail = sprintf( '%s（%d / %d 個目）', $d['code'][ $d['ci'] ][2], $d['ci'] + 1, count( $d['code'] ) );
-		} elseif ( 'media_copy' === $stage || 'code_copy' === $stage ) {
+		} elseif ( in_array( $stage, array( 'media_copy', 'code_copy', 'lang_copy' ), true ) ) {
 			$detail = sprintf( '%d / %d 件（%s / %s）', $d['qi'], count( $d['queue'] ), size_format( $d['bytes_done'], 1 ), size_format( $d['bytes_total'], 1 ) );
 		} elseif ( 'db_tables' === $stage && isset( $d['tables'][ $d['table'] ] ) ) {
 			$detail = sprintf( '%s（%d / %d 個目）', $d['tables'][ $d['table'] ]['src'], $d['table'] + 1, count( $d['tables'] ) );
