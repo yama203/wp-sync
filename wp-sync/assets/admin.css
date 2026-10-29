@@ -318,6 +318,23 @@
 	font-weight: 500;
 }
 
+.wps-option-choice {
+	flex-direction: column;
+	gap: 8px;
+	cursor: default;
+}
+
+.wps-option-choice label {
+	display: flex;
+	gap: 10px;
+	align-items: flex-start;
+	cursor: pointer;
+}
+
+.wps-option-choice.is-disabled label {
+	cursor: default;
+}
+
 .wps-option.is-disabled {
 	opacity: 0.5;
 	cursor: default;

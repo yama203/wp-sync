@@ -330,10 +330,17 @@ class WPS_Admin {
 								<input type="checkbox" id="wps-db" checked>
 								<span><strong>データベース</strong><span class="wps-option-desc">投稿・固定ページ・設定・ユーザーなど。URL とパスは送り先に合わせて置き換えます。</span></span>
 							</label>
-							<label class="wps-option wps-option-sub">
-								<input type="checkbox" id="wps-keep-active" checked>
-								<span><strong>有効化しているプラグインの設定は送らない</strong><span class="wps-option-desc">送り先で有効なプラグインをそのまま残します。</span></span>
-							</label>
+							<div class="wps-option wps-option-sub wps-option-choice" id="wps-active-choice">
+								<span class="wps-option-label"><strong>プラグインの有効・無効</strong></span>
+								<label>
+									<input type="radio" name="wps-active" id="wps-keep-active" value="keep" checked>
+									<span><strong>送り先のままにする</strong><span class="wps-option-desc">送り先で有効なプラグインをそのまま残します。</span></span>
+								</label>
+								<label>
+									<input type="radio" name="wps-active" id="wps-copy-active" value="copy">
+									<span><strong>送り元に合わせる</strong><span class="wps-option-desc">送り元で有効なプラグインを、送り先でも有効にします（はじめての pull など）。送り先にないプラグインは有効になりません。</span></span>
+								</label>
+							</div>
 							<label class="wps-option">
 								<input type="checkbox" id="wps-media" checked>
 								<span><strong>メディア</strong><span class="wps-option-desc">uploads フォルダのうち、大きさか更新日時が違うファイルだけを送ります。</span></span>

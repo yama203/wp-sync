@@ -115,10 +115,12 @@
 	}
 
 	function syncOptions() {
-		[ [ 'wps-db', 'wps-keep-active' ], [ 'wps-media', 'wps-media-delete' ] ].forEach( function ( pair ) {
-			var sub = $( pair[ 1 ] );
-			sub.disabled = running || ! $( pair[ 0 ] ).checked;
-			sub.closest( '.wps-option' ).classList.toggle( 'is-disabled', sub.disabled );
+		[ [ 'wps-db', [ 'wps-keep-active', 'wps-copy-active' ] ], [ 'wps-media', [ 'wps-media-delete' ] ] ].forEach( function ( pair ) {
+			var off = running || ! $( pair[ 0 ] ).checked;
+			pair[ 1 ].forEach( function ( id ) {
+				$( id ).disabled = off;
+			} );
+			$( pair[ 1 ][ 0 ] ).closest( '.wps-option' ).classList.toggle( 'is-disabled', off );
 		} );
 	}
 
@@ -533,17 +535,18 @@
 			} );
 		} );
 
-		// 「プラグインの設定は送らない」は前回の選び方を覚えておく。
-		var keepActive = $( 'wps-keep-active' );
+		// プラグインの有効・無効は前回の選び方を覚えておく。
 		try {
 			if ( window.localStorage.getItem( 'wpsKeepActive' ) === '0' ) {
-				keepActive.checked = false;
+				$( 'wps-copy-active' ).checked = true;
 			}
 		} catch ( e ) {}
-		keepActive.addEventListener( 'change', function () {
-			try {
-				window.localStorage.setItem( 'wpsKeepActive', keepActive.checked ? '1' : '0' );
-			} catch ( e ) {}
+		[ 'wps-keep-active', 'wps-copy-active' ].forEach( function ( id ) {
+			$( id ).addEventListener( 'change', function () {
+				try {
+					window.localStorage.setItem( 'wpsKeepActive', $( 'wps-keep-active' ).checked ? '1' : '0' );
+				} catch ( e ) {}
+			} );
 		} );
 
 		$( 'wps-add-pair' ).addEventListener( 'click', addPair );

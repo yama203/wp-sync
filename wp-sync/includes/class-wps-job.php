@@ -581,9 +581,7 @@ class WPS_Job {
 			case 'db_begin':
 				$dst->call( 'import_begin' );
 				$this->log( sprintf( 'DB: %d 個のテーブルを送ります。', count( $d['tables'] ) ) );
-				if ( ! empty( $d['keep_active'] ) ) {
-					$this->log( 'DB: 有効化しているプラグインの設定は送らず、送り先のものを残します。' );
-				}
+				$this->log( ! empty( $d['keep_active'] ) ? 'DB: プラグインの有効・無効は送り先のままにします。' : 'DB: プラグインの有効・無効を送り元に合わせます。' );
 				$this->next_stage();
 				return;
 
