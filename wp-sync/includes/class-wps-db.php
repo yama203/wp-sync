@@ -50,11 +50,11 @@ class WPS_DB {
 		return array_column( self::rows( $sql ), 0 );
 	}
 
-	private static function ident( $name ) {
+	public static function ident( $name ) {
 		return '`' . str_replace( '`', '``', $name ) . '`';
 	}
 
-	private static function quote( $value ) {
+	public static function quote( $value ) {
 		if ( null === $value ) {
 			return 'NULL';
 		}

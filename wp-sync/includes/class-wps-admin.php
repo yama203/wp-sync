@@ -16,9 +16,10 @@ class WPS_Admin {
 		add_action( 'admin_post_wps_permissions', array( __CLASS__, 'save_permissions' ) );
 		add_action( 'admin_post_wps_regenerate', array( __CLASS__, 'regenerate' ) );
 		add_action( 'admin_post_wps_disconnect', array( __CLASS__, 'disconnect' ) );
-		foreach ( array( 'connect', 'info', 'start', 'step', 'restore' ) as $action ) {
+		foreach ( array( 'connect', 'info', 'start', 'step', 'restore', 'export', 'upload', 'import', 'confirm', 'file_step' ) as $action ) {
 			add_action( 'wp_ajax_wps_' . $action, array( __CLASS__, 'ajax_' . $action ) );
 		}
+		add_action( 'admin_post_wps_download', array( __CLASS__, 'download' ) );
 		add_filter( ( is_multisite() ? 'network_admin_' : '' ) . 'plugin_action_links_' . WPS_BASENAME, array( __CLASS__, 'action_links' ) );
 	}
 
@@ -41,6 +42,7 @@ class WPS_Admin {
 	public static function assets() {
 		wp_enqueue_style( 'wps-admin', WPS_URL . 'assets/admin.css', array(), WPS_VERSION . '.' . filemtime( WPS_DIR . 'assets/admin.css' ) );
 		wp_enqueue_script( 'wps-admin', WPS_URL . 'assets/admin.js', array(), WPS_VERSION . '.' . filemtime( WPS_DIR . 'assets/admin.js' ), true );
+		wp_enqueue_script( 'wps-archive', WPS_URL . 'assets/archive.js', array( 'wps-admin' ), WPS_VERSION . '.' . filemtime( WPS_DIR . 'assets/archive.js' ), true );
 		wp_localize_script(
 			'wps-admin',
 			'wpsAdmin',
@@ -50,6 +52,9 @@ class WPS_Admin {
 				'connected' => (bool) WPS_Settings::remote(),
 				'login'     => wp_login_url( self::url() ),
 				'version'   => WPS_VERSION,
+				// アップロードを分けて送る大きさ（このサイトの upload_max_filesize・post_max_size に収まるように）。
+				'chunk'     => (int) max( 262144, min( 4194304, wp_max_upload_size() * 0.8 ) ),
+				'download'  => wp_nonce_url( admin_url( 'admin-post.php?action=wps_download' ), 'wps_download' ),
 			)
 		);
 	}
@@ -240,9 +245,159 @@ class WPS_Admin {
 		);
 	}
 
+	/* ---------- エクスポート・インポート ---------- */
+
+	private static function post_pairs() {
+		$pairs = json_decode( (string) self::post( 'pairs', '[]' ), true );
+		return is_array( $pairs ) ? $pairs : array();
+	}
+
+	public static function ajax_export() {
+		self::ajax_run(
+			function () {
+				return WPS_Archive::start_export( self::post_pairs() );
+			}
+		);
+	}
+
+	public static function ajax_upload() {
+		self::ajax_run(
+			function () {
+				// phpcs:ignore WordPress.Security.NonceVerification -- ajax_guard で確かめている。
+				$file = isset( $_FILES['chunk'] ) ? $_FILES['chunk'] : null;
+				if ( ! $file || UPLOAD_ERR_OK !== $file['error'] || ! is_uploaded_file( $file['tmp_name'] ) ) {
+					throw new Exception( 'アップロードを受け取れませんでした（エラー ' . ( $file ? (int) $file['error'] : '-' ) . '）。' );
+				}
+				return WPS_Archive::upload( (string) self::post( 'id' ), (int) self::post( 'offset' ), $file['tmp_name'] );
+			}
+		);
+	}
+
+	public static function ajax_import() {
+		self::ajax_run(
+			function () {
+				return WPS_Archive::start_import( (string) self::post( 'id' ), (string) self::post( 'name' ) );
+			}
+		);
+	}
+
+	public static function ajax_confirm() {
+		self::ajax_run(
+			function () {
+				return WPS_Archive::confirm( (string) self::post( 'id' ), self::post_pairs(), '1' === self::post( 'keep_active_plugins' ) );
+			}
+		);
+	}
+
+	public static function ajax_file_step() {
+		self::ajax_run(
+			function () {
+				return WPS_Archive::step_by_id( (string) self::post( 'id' ) );
+			}
+		);
+	}
+
+	public static function download() {
+		if ( ! current_user_can( WPS_Settings::capability() ) ) {
+			wp_die( '権限がありません。' );
+		}
+		check_admin_referer( 'wps_download' );
+		try {
+			WPS_Archive::download( isset( $_GET['id'] ) ? (string) wp_unslash( $_GET['id'] ) : '' ); // phpcs:ignore
+		} catch ( Exception $e ) {
+			wp_die( esc_html( $e->getMessage() ) );
+		}
+	}
+
+	private static function render_file_panel() {
+		$backup = WPS_DB::backup_info();
+		?>
+		<section class="wps-card">
+			<h2 class="wps-card-title">エクスポート</h2>
+			<p>このサイトの DB を、ダウンロードできるファイル（<code>.sql.gz</code>）に書き出します。そのまま mysql や phpMyAdmin でも読み込めます。<?php echo is_multisite() ? 'マルチサイトでは、ネットワークのすべてのサイトの DB を書き出します。' : ''; ?></p>
+			<p class="description">WP Sync のインポートで読み込むと、取り込む先の URL・パス・接頭辞に自動で置き換えます。接続キーなど WP Sync の設定は書き出しません。</p>
+			<details class="wps-details wps-pairs">
+				<summary>書き出すときに置き換える <span class="wps-count" id="wps-export-pairs-count"></span></summary>
+				<div class="wps-details-body">
+					<p class="description">書き出すファイルの中だけを置き換えます（このサイトの DB は変わりません）。ふつうは空のままで大丈夫です。</p>
+					<table class="wps-table">
+						<thead><tr><th>置き換える前</th><th class="wps-arrow-col"></th><th>置き換えた後</th><th class="wps-tag-col"></th></tr></thead>
+						<tbody id="wps-export-pairs"></tbody>
+					</table>
+					<button type="button" class="button button-small" data-add-pair="wps-export-pairs"><span class="dashicons dashicons-plus-alt2"></span> 置換を足す</button>
+				</div>
+			</details>
+			<div class="wps-actions">
+				<button type="button" class="button button-primary button-large" id="wps-export-start"><span class="dashicons dashicons-download"></span> エクスポートする</button>
+			</div>
+			<div class="wps-file-progress" id="wps-export-progress" hidden></div>
+		</section>
+
+		<section class="wps-card">
+			<h2 class="wps-card-title">インポート</h2>
+			<p>書き出したファイル（<code>.sql.gz</code> か <code>.sql</code>）を、このサイトの DB に取り込みます。ファイルの中の URL・パス・接頭辞は、このサイトのものに自動で置き換えます。</p>
+			<p class="description">WP Sync でエクスポートしたファイルのほか、mysqldump や phpMyAdmin のファイルも読み込めます（options テーブルの URL から置き換えます。マルチサイトは WP Sync のファイルだけ）。</p>
+			<div class="wps-file-pick">
+				<input type="file" id="wps-import-file" accept=".sql,.gz,application/gzip,application/sql">
+				<button type="button" class="button button-large" id="wps-import-upload" disabled>ファイルを読み込む</button>
+			</div>
+			<div class="wps-file-progress" id="wps-import-progress" hidden></div>
+
+			<div class="wps-confirm" id="wps-import-confirm" hidden>
+				<h3>取り込む前の確認</h3>
+				<dl class="wps-facts" id="wps-import-facts"></dl>
+				<div class="wps-options">
+					<div class="wps-option wps-option-choice">
+						<span class="wps-option-label"><strong>プラグインの有効・無効</strong></span>
+						<label>
+							<input type="radio" name="wps-import-active" id="wps-import-keep-active" value="keep" checked>
+							<span><strong>このサイトのままにする</strong><span class="wps-option-desc">このサイトで有効なプラグインをそのまま残します。</span></span>
+						</label>
+						<label>
+							<input type="radio" name="wps-import-active" value="copy">
+							<span><strong>ファイルに合わせる</strong><span class="wps-option-desc">ファイルの DB で有効だったプラグインを有効にします。このサイトにないプラグインは有効になりません。</span></span>
+						</label>
+					</div>
+				</div>
+				<details class="wps-details wps-pairs" open>
+					<summary>URL とパスの置換 <span class="wps-count" id="wps-import-pairs-count"></span></summary>
+					<div class="wps-details-body">
+						<p class="description">serialize された値や、ブロックの JSON の中の URL も壊さずに置き換えます。ほかに置き換えたいものがあれば足してください。</p>
+						<table class="wps-table">
+							<thead><tr><th>置き換える前</th><th class="wps-arrow-col"></th><th>置き換えた後</th><th class="wps-tag-col"></th></tr></thead>
+							<tbody id="wps-import-pairs-auto"></tbody>
+							<tbody id="wps-import-pairs"></tbody>
+						</table>
+						<button type="button" class="button button-small" data-add-pair="wps-import-pairs"><span class="dashicons dashicons-plus-alt2"></span> 置換を足す</button>
+					</div>
+				</details>
+				<div class="wps-run">
+					<p class="wps-summary">このサイト（<?php echo esc_html( WPS_Settings::home() ); ?>）の DB を上書きします。終わったら、ファイルの DB のユーザーでログインし直すことになります。</p>
+					<div class="wps-run-buttons">
+						<button type="button" class="button button-large" id="wps-import-cancel">やめる</button>
+						<button type="button" class="button button-primary button-hero" id="wps-import-start">インポートする</button>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<section class="wps-card wps-card-quiet">
+			<h2 class="wps-card-title">元に戻す</h2>
+			<p class="description">インポートや pull で DB を取り込むと、取り込む前の DB を 1 回分だけ残します。</p>
+			<div class="wps-backup-list">
+				<div class="wps-backup">
+					<span class="wps-backup-site">このサイト</span>
+					<span class="wps-backup-info"><?php echo $backup ? esc_html( ( $backup['time'] ? wp_date( 'Y年n月j日 H:i', $backup['time'] ) : '日時不明' ) . ' に取り込む前の DB' . ( $backup['from'] ? '（' . $backup['from'] . ' から取り込み）' : '' ) ) : 'バックアップはありません'; ?></span>
+					<button type="button" class="button" id="wps-file-restore" <?php disabled( ! $backup ); ?>>元に戻す</button>
+				</div>
+			</div>
+		</section>
+		<?php
+	}
+
 	public static function render() {
 		$notice  = isset( $_GET['wps_notice'] ) ? sanitize_key( $_GET['wps_notice'] ) : ''; // phpcs:ignore
-		$tab     = isset( $_GET['tab'] ) && 'settings' === $_GET['tab'] ? 'settings' : 'sync'; // phpcs:ignore
+		$tab     = isset( $_GET['tab'] ) && in_array( $_GET['tab'], array( 'settings', 'file' ), true ) ? sanitize_key( $_GET['tab'] ) : 'sync'; // phpcs:ignore
 		$notices = array(
 			'saved'        => '許可の設定を保存しました。',
 			'regenerated'  => '接続キーを作り直しました。接続先に新しいキーを貼り直してください。',
@@ -254,7 +409,7 @@ class WPS_Admin {
 		<div class="wrap wps">
 			<div class="wps-header">
 				<h1>WP Sync <span class="wps-version"><?php echo esc_html( WPS_VERSION ); ?></span></h1>
-				<p class="wps-lead">ローカルと本番の間で、データベース・メディア・テーマ・プラグインを同期します。</p>
+				<p class="wps-lead">ローカルと本番の間で、データベース・メディア・テーマ・プラグインを同期します。DB はファイルでエクスポート・インポートもできます。</p>
 			</div>
 
 			<?php if ( isset( $notices[ $notice ] ) ) : ?>
@@ -266,6 +421,7 @@ class WPS_Admin {
 
 			<nav class="nav-tab-wrapper wps-tabs">
 				<a href="<?php echo esc_url( self::url() ); ?>" class="nav-tab <?php echo 'sync' === $tab ? 'nav-tab-active' : ''; ?>" data-tab="sync">同期</a>
+				<a href="<?php echo esc_url( self::url( array( 'tab' => 'file' ) ) ); ?>" class="nav-tab <?php echo 'file' === $tab ? 'nav-tab-active' : ''; ?>" data-tab="file">エクスポート・インポート</a>
 				<a href="<?php echo esc_url( self::url( array( 'tab' => 'settings' ) ) ); ?>" class="nav-tab <?php echo 'settings' === $tab ? 'nav-tab-active' : ''; ?>" data-tab="settings">このサイトの設定</a>
 			</nav>
 
@@ -417,6 +573,10 @@ class WPS_Admin {
 						</div>
 					</section>
 				<?php endif; ?>
+			</div>
+
+			<div class="wps-panel" data-panel="file" <?php echo 'file' === $tab ? '' : 'hidden'; ?>>
+				<?php self::render_file_panel(); ?>
 			</div>
 
 			<div class="wps-panel" data-panel="settings" <?php echo 'settings' === $tab ? '' : 'hidden'; ?>>

@@ -39,7 +39,7 @@ class WPS_Job {
 		$this->data = $data;
 	}
 
-	private static function dir() {
+	public static function dir() {
 		$dir = WPS_Files::base() . '/' . WPS_Files::WORK_DIR;
 		if ( ! is_dir( $dir ) ) {
 			wp_mkdir_p( $dir );
@@ -211,7 +211,7 @@ class WPS_Job {
 	/**
 	 * メイン以外のサイトの URL の組（メインのサイトの URL の置換だけでは合わないものを拾う）。
 	 */
-	private static function site_pairs( array $src, array $dst ) {
+	public static function site_pairs( array $src, array $dst ) {
 		$pairs = array();
 		foreach ( self::map_sites( $src, $dst ) as $site ) {
 			if ( $site['id'] === (int) $src['network']['main'] ) {

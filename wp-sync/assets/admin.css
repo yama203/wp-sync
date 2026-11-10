@@ -727,3 +727,76 @@
 		text-align: left;
 	}
 }
+
+/* ---------- エクスポート・インポート ---------- */
+
+.wps-file-progress {
+	margin-top: 20px;
+	padding-top: 20px;
+	border-top: 1px solid #f0f0f1;
+}
+
+.wps-file-progress[hidden],
+.wps-confirm[hidden] {
+	display: none;
+}
+
+.wps-file-pick {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	margin-top: 16px;
+	padding: 16px;
+	background: var(--wps-soft);
+	border: 1px dashed var(--wps-border);
+	border-radius: var(--wps-radius);
+}
+
+.wps-confirm {
+	margin-top: 20px;
+	padding-top: 20px;
+	border-top: 1px solid #f0f0f1;
+}
+
+.wps-confirm h3 {
+	margin: 0 0 12px;
+	font-size: 15px;
+}
+
+.wps-confirm .wps-options {
+	margin-top: 16px;
+}
+
+.wps-facts {
+	display: grid;
+	grid-template-columns: max-content 1fr;
+	gap: 6px 16px;
+	margin: 0;
+}
+
+.wps-facts dt {
+	color: var(--wps-muted);
+}
+
+.wps-facts dd {
+	margin: 0;
+	word-break: break-all;
+}
+
+.wps-run-buttons {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 8px;
+}
+
+@media (max-width: 600px) {
+	.wps-facts {
+		grid-template-columns: 1fr;
+	}
+
+	.wps-facts dd {
+		margin-bottom: 6px;
+	}
+}

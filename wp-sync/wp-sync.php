@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       WP Sync
  * Description:       ローカルと本番の WordPress の間で、データベース・メディア・テーマ・プラグインを pull / push で同期します（WP Migrate Pro の代わり）。
- * Version:           0.4.4
+ * Version:           0.5.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            yama
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'WPS_VERSION', '0.4.4' );
+define( 'WPS_VERSION', '0.5.0' );
 // 通信の形を変えたら上げる。両側で一致しないと同期しない。
 define( 'WPS_API_VERSION', 4 );
 define( 'WPS_DIR', plugin_dir_path( __FILE__ ) );
@@ -29,6 +29,7 @@ require_once WPS_DIR . 'includes/class-wps-db.php';
 require_once WPS_DIR . 'includes/class-wps-files.php';
 require_once WPS_DIR . 'includes/class-wps-server.php';
 require_once WPS_DIR . 'includes/class-wps-job.php';
+require_once WPS_DIR . 'includes/class-wps-archive.php';
 require_once WPS_DIR . 'includes/class-wps-updater.php';
 
 WPS_Server::init();
