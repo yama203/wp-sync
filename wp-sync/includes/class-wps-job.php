@@ -39,14 +39,37 @@ class WPS_Job {
 		$this->data = $data;
 	}
 
+	/**
+	 * 途中経過や一時ファイルを置くフォルダ。
+	 *
+	 * ふつうは uploads の中の wp-sync。アップロード先が別のサーバーの絶対パスに決め打ちされていて
+	 * （upload_path。本番の DB をそのまま取り込んだローカルなど）作れない・書けないときは、
+	 * wp-content/uploads/wp-sync に置く（たいていのサイトで git の対象外）。
+	 */
 	public static function dir() {
-		$dir = WPS_Files::base() . '/' . WPS_Files::WORK_DIR;
-		if ( ! is_dir( $dir ) ) {
-			wp_mkdir_p( $dir );
-			file_put_contents( $dir . '/.htaccess', "Require all denied\nDeny from all\n" ); // phpcs:ignore
-			file_put_contents( $dir . '/index.php', "<?php\n// Silence is golden.\n" ); // phpcs:ignore
+		static $picked = null;
+		if ( null !== $picked && is_dir( $picked ) ) {
+			return $picked;
 		}
-		return $dir;
+		$candidates = array(
+			WPS_Files::base() . '/' . WPS_Files::WORK_DIR,
+			untrailingslashit( wp_normalize_path( WP_CONTENT_DIR ) ) . '/uploads/' . WPS_Files::WORK_DIR,
+		);
+		foreach ( $candidates as $dir ) {
+			if ( ! is_dir( $dir ) && ! @mkdir( $dir, 0755, true ) && ! is_dir( $dir ) ) { // phpcs:ignore
+				continue;
+			}
+			if ( ! is_writable( $dir ) ) { // phpcs:ignore
+				continue;
+			}
+			if ( ! is_file( $dir . '/.htaccess' ) ) {
+				file_put_contents( $dir . '/.htaccess', "Require all denied\nDeny from all\n" ); // phpcs:ignore
+				file_put_contents( $dir . '/index.php', "<?php\n// Silence is golden.\n" ); // phpcs:ignore
+			}
+			$picked = $dir;
+			return $dir;
+		}
+		throw new Exception( '作業用のフォルダを作れません。uploads か wp-content に書き込めるようにしてください。' );
 	}
 
 	private static function file( $id ) {
