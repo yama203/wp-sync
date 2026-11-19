@@ -106,7 +106,7 @@ class WPS_Remote_Endpoint extends WPS_Endpoint {
 	}
 
 	/** 何度も送ってよい操作（同じ要求をもう一度送っても結果が変わらない）。 */
-	const REPEATABLE = array( 'info', 'export_chunk', 'files_list', 'files_get', 'files_put', 'files_delete' );
+	const REPEATABLE = array( 'info', 'export_chunk', 'files_list', 'files_get', 'files_hash', 'files_touch', 'files_put', 'files_delete' );
 
 	/** つながらなかったときに待つ秒数。この回数だけやり直す。 */
 	const RETRY_WAITS = array( 3, 10, 20, 30 );

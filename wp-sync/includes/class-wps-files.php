@@ -247,6 +247,50 @@ class WPS_Files {
 	}
 
 	/**
+	 * 中身の MD5 を返す（大きさが同じで更新日時だけ違うファイルを、送る前に比べるため。0.5.2）。
+	 *
+	 * @param array $args root: uploads、items: 相対パスの配列
+	 * @return array hashes: items と同じ順の MD5（読めないファイルは null）
+	 */
+	public static function hash( $args ) {
+		$root = self::root( $args );
+		if ( 'uploads' !== $root ) {
+			throw new Exception( '中身を比べるのはメディアだけです。' );
+		}
+		$hashes = array();
+		foreach ( (array) $args['items'] as $rel ) {
+			$path     = self::path( $rel, $root );
+			$hash     = is_file( $path ) ? md5_file( $path ) : false;
+			$hashes[] = false === $hash ? null : $hash;
+		}
+		return array( 'hashes' => $hashes );
+	}
+
+	/**
+	 * 中身が同じだったファイルの更新日時を、送り元に合わせる（次の比較で「変わっていない」と分かるように。0.5.2）。
+	 *
+	 * @param array $args root: uploads、items: [[相対パス, 大きさ, 更新日時], ...]
+	 * @return array touched: 合わせた件数
+	 */
+	public static function touch_files( $args ) {
+		$root = self::root( $args );
+		if ( 'uploads' !== $root ) {
+			throw new Exception( '更新日時を合わせるのはメディアだけです。' );
+		}
+		$touched = 0;
+		foreach ( (array) $args['items'] as $item ) {
+			list( $rel, $size, $mtime ) = $item;
+			$path                       = self::path( $rel, $root );
+			clearstatcache( true, $path );
+			// 比べた後に変わっていたら触らない（次の同期で送られる）。
+			if ( is_file( $path ) && filesize( $path ) === (int) $size && touch( $path, (int) $mtime ) ) { // phpcs:ignore
+				++$touched;
+			}
+		}
+		return array( 'touched' => $touched );
+	}
+
+	/**
 	 * メディアを消す。
 	 *
 	 * @param array $args items: 相対パスの配列

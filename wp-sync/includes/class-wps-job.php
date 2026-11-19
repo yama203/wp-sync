@@ -23,6 +23,7 @@ class WPS_Job {
 		'code_copy'    => 'テーマ・プラグインを送っています',
 		'code_commit'  => 'テーマ・プラグインを入れ替えています',
 		'media_scan'   => 'メディアの一覧を比べています',
+		'media_verify' => '日時だけ違うメディアの中身を比べています',
 		'media_copy'   => 'メディアを送っています',
 		'media_delete' => '送り元にないメディアを消しています',
 		'lang_scan'    => '言語ファイルを比べています',
@@ -334,6 +335,7 @@ class WPS_Job {
 		}
 		if ( $do_media ) {
 			$stages[] = 'media_scan';
+			$stages[] = 'media_verify';
 			$stages[] = 'media_copy';
 			if ( ! empty( $opts['media_delete'] ) ) {
 				$stages[] = 'media_delete';
@@ -467,12 +469,21 @@ class WPS_Job {
 				$queue   = array();
 				$total   = 0;
 				$deletes = array();
+				$verify  = array();
+				$vbytes  = 0;
 				foreach ( $from as $rel => $meta ) {
-					if ( ! isset( $to[ $rel ] ) || $to[ $rel ][0] !== $meta[0] || $to[ $rel ][1] !== $meta[1] ) {
+					if ( isset( $to[ $rel ] ) && $to[ $rel ][0] === $meta[0] && $to[ $rel ][1] !== $meta[1] && $meta[0] > 0 ) {
+						// 大きさが同じで日時だけ違う。送る前に中身を比べる（media_verify。0.5.2）
+						$verify[] = array( (string) $rel, $meta[0], $meta[1] );
+						$vbytes  += $meta[0];
+					} elseif ( ! isset( $to[ $rel ] ) || $to[ $rel ][0] !== $meta[0] || $to[ $rel ][1] !== $meta[1] ) {
 						$queue[] = array( (string) $rel, $meta[0], $meta[1], 'uploads' );
 						$total  += $meta[0];
 					}
 				}
+				$d['verify']      = $verify;
+				$d['vi']          = 0;
+				$d['vsame']       = 0;
 				foreach ( $to as $rel => $meta ) {
 					if ( ! isset( $from[ $rel ] ) ) {
 						$deletes[] = (string) $rel;
@@ -485,10 +496,17 @@ class WPS_Job {
 				$d['bytes_done']  = 0;
 				$d['deletes']     = $deletes;
 				$this->log( sprintf( 'メディア: 送り元 %d 件、送り先 %d 件。送るもの %d 件（%s）。', count( $from ), count( $to ), count( $queue ), size_format( $total, 1 ) ) );
+				if ( $verify ) {
+					$this->log( sprintf( 'メディア: 大きさが同じで日時だけ違うもの %d 件（%s）は、中身を比べてから決めます。', count( $verify ), size_format( $vbytes, 1 ) ) );
+				}
 				if ( in_array( 'media_delete', $d['stages'], true ) ) {
 					$this->log( sprintf( 'メディア: 送り元にないもの %d 件を消します。', count( $deletes ) ) );
 				}
 				$this->next_stage();
+				return;
+
+			case 'media_verify':
+				$this->verify_media( $src, $dst );
 				return;
 
 			case 'code_scan':
@@ -663,6 +681,75 @@ class WPS_Job {
 	/**
 	 * 順番待ちのファイルを、決まった大きさの分だけ送る。1 回に送るのは同じ場所（root）のファイルだけ。
 	 */
+	/** 中身を比べるときに、1 回の要求で読む大きさと件数の目安。 */
+	const VERIFY_BYTES = 134217728;
+	const VERIFY_ITEMS = 500;
+
+	/**
+	 * 大きさが同じで日時だけ違うメディアの中身（MD5）を両方で取り、同じなら送り先の日時を合わせ、違えば送るものに足す（0.5.2）。
+	 * どちらかの WP Sync が古くて files_hash・files_touch がないときは、比べずに残りを全部送るものに足す。
+	 */
+	private function verify_media( WPS_Endpoint $src, WPS_Endpoint $dst ) {
+		$d = &$this->data;
+		if ( empty( $d['verify'] ) ) {
+			$this->next_stage();
+			return;
+		}
+		$batch = array();
+		$bytes = 0;
+		while ( $d['vi'] < count( $d['verify'] ) && ( ! $batch || ( $bytes < self::VERIFY_BYTES && count( $batch ) < self::VERIFY_ITEMS ) ) ) {
+			$item    = $d['verify'][ $d['vi'] ];
+			$batch[] = $item;
+			$bytes  += $item[1];
+			++$d['vi'];
+		}
+		$rels = wp_list_pluck( $batch, 0 );
+		try {
+			$a = $src->call( 'files_hash', array( 'root' => 'uploads', 'items' => $rels ) );
+			$b = $dst->call( 'files_hash', array( 'root' => 'uploads', 'items' => $rels ) );
+			$same = array();
+			foreach ( $batch as $i => $item ) {
+				$ha = isset( $a['hashes'][ $i ] ) ? $a['hashes'][ $i ] : null;
+				$hb = isset( $b['hashes'][ $i ] ) ? $b['hashes'][ $i ] : null;
+				if ( null !== $ha && $ha === $hb ) {
+					$same[] = $item;
+				} else {
+					$this->enqueue( $item );
+				}
+			}
+			if ( $same ) {
+				$dst->call( 'files_touch', array( 'root' => 'uploads', 'items' => $same ) );
+				$d['vsame'] += count( $same );
+			}
+		} catch ( Exception $e ) {
+			if ( false === strpos( $e->getMessage(), '知らない操作です' ) ) {
+				throw $e;
+			}
+			// 0.5.1 以前の WP Sync。この回の分と残りを、比べずに送る
+			$this->log( 'メディア: 接続先の WP Sync が古い（0.5.1 以前）ので中身を比べられません。日時だけ違うものも送ります（接続先を 0.5.2 以上に更新すると、次から比べます）。' );
+			for ( $i = $d['vi'] - count( $batch ); $i < count( $d['verify'] ); $i++ ) {
+				$this->enqueue( $d['verify'][ $i ] );
+			}
+			$d['vi']        = count( $d['verify'] );
+			$d['vfallback'] = true;
+		}
+		if ( $d['vi'] >= count( $d['verify'] ) ) {
+			$sent = count( $d['verify'] ) - $d['vsame'];
+			if ( ! empty( $d['vfallback'] ) ) {
+				$this->log( sprintf( 'メディア: 中身が同じ %d 件は日時だけ合わせました。残りは比べずに送ります。送るものは合わせて %d 件（%s）。', $d['vsame'], count( $d['queue'] ), size_format( $d['bytes_total'], 1 ) ) );
+			} else {
+				$this->log( sprintf( 'メディア: 中身が同じ %d 件は送らずに日時だけ合わせ、違う %d 件を送ります。送るものは合わせて %d 件（%s）。', $d['vsame'], $sent, count( $d['queue'] ), size_format( $d['bytes_total'], 1 ) ) );
+			}
+			$d['verify'] = array();
+			$this->next_stage();
+		}
+	}
+
+	private function enqueue( array $item ) {
+		$this->data['queue'][]       = array( $item[0], $item[1], $item[2], 'uploads' );
+		$this->data['bytes_total'] += $item[1];
+	}
+
 	private function copy_files( WPS_Endpoint $src, WPS_Endpoint $dst ) {
 		$d      = &$this->data;
 		$budget = $d['chunk'];
@@ -724,7 +811,9 @@ class WPS_Job {
 		$stage = $this->stage();
 
 		$percent = 0;
-		if ( in_array( $stage, array( 'media_copy', 'code_copy', 'lang_copy' ), true ) ) {
+		if ( 'media_verify' === $stage && ! empty( $d['verify'] ) ) {
+			$percent = $d['vi'] / count( $d['verify'] );
+		} elseif ( in_array( $stage, array( 'media_copy', 'code_copy', 'lang_copy' ), true ) ) {
 			$percent = $d['bytes_total'] ? $d['bytes_done'] / $d['bytes_total'] : 1;
 		} elseif ( 'db_tables' === $stage ) {
 			$percent = $d['rows_total'] ? $d['rows_done'] / $d['rows_total'] : $d['table'] / max( 1, count( $d['tables'] ) );
@@ -733,7 +822,9 @@ class WPS_Job {
 		}
 
 		$detail = '';
-		if ( 'code_scan' === $stage && isset( $d['code'][ $d['ci'] ] ) ) {
+		if ( 'media_verify' === $stage && ! empty( $d['verify'] ) ) {
+			$detail = sprintf( '%d / %d 件', $d['vi'], count( $d['verify'] ) );
+		} elseif ( 'code_scan' === $stage && isset( $d['code'][ $d['ci'] ] ) ) {
 			$detail = sprintf( '%s（%d / %d 個目）', $d['code'][ $d['ci'] ][2], $d['ci'] + 1, count( $d['code'] ) );
 		} elseif ( in_array( $stage, array( 'media_copy', 'code_copy', 'lang_copy' ), true ) ) {
 			$detail = sprintf( '%d / %d 件（%s / %s）', $d['qi'], count( $d['queue'] ), size_format( $d['bytes_done'], 1 ), size_format( $d['bytes_total'], 1 ) );

@@ -23,6 +23,8 @@ class WPS_Server {
 		'export_chunk'    => 'pull',
 		'files_list'      => 'either',
 		'files_get'       => 'pull',
+		'files_hash'      => 'either',
+		'files_touch'     => 'push',
 		'import_begin'    => 'push',
 		'import_chunk'    => 'push',
 		'import_finalize' => 'push',
@@ -141,6 +143,10 @@ class WPS_Server {
 				return WPS_Files::list_files( $args );
 			case 'files_get':
 				return WPS_Files::get( $args );
+			case 'files_hash':
+				return WPS_Files::hash( $args );
+			case 'files_touch':
+				return WPS_Files::touch_files( $args );
 			case 'files_put':
 				return WPS_Files::put( $args );
 			case 'files_delete':
