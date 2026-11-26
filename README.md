@@ -36,15 +36,29 @@ pull で DB を取り込むと、ローカルのユーザーは本番のもの�
   - ファイルの接頭辞と違うテーブル・WP Sync の作業用のテーブル（`wpsbak_` など）は取り込まない。
 - 止まったら「続きから再開」で続けられる。
 
+### 接続先を複数保存する（0.6.0）
+
+本番・ステージングのように、接続先を名前を付けて複数保存し、同期の画面の「接続先」で選んで pull / push する（WP Migrate の接続先のプロファイルと同じ）。
+
+- 足す・名前を変える・消すのは「このサイトの設定 → 接続先」。名前を空にすると相手のホスト名になる。同じ名前か同じ相手（home）の接続先を足すと置き換える。
+- 同期を始めたときの接続先を同期の状態に覚えるので、途中で接続先を切り替えても、動いている同期の相手は変わらない。
+- 0.5 までの接続先（`wps_remote`、1 件）は、更新後に初めて読むときに 1 件目として引き継ぐ（名前は相手のホスト名）。`wps_remote` には今使っている接続先を入れ続けるので、古い版に戻しても使っていた接続先でつながる。
+- 接続先（`wps_remotes`・`wps_remote_active`）も、pull しても取り込み先のものを残す。DB を読み出すときは、送り元の `wps_*` の行を送らない（受け取る側が古い版でも、相手の DB にこのサイトの接続先やキーが入らないように）。
+- 通信の形は変えていないので、相手は 0.5.x のままでも同期できる（WPS_API_VERSION は 4 のまま）。
+
 ### WP-CLI
 
 ```
 wp sync key                                   # このサイトの接続キー
-wp sync connect <key> [--connect-url=<url>]   # 接続先を設定
+wp sync connect <key> [--name=<名前>] [--connect-url=<url>]   # 接続先を足す（同じ名前・同じ相手なら置き換え）。足したものを使う
+wp sync remotes                               # 接続先の一覧（* が使用中）
+wp sync use <名前>                            # 使う接続先を切り替える
+wp sync rename <名前> <新しい名前>
+wp sync disconnect [<名前>] [--yes]           # 接続先を消す
 wp sync allow --pull=yes --push=no            # 相手に許可する操作
-wp sync pull [--no-db] [--no-media] [--delete-media] [--themes=<名前,…|all>] [--plugins=<名前,…|all>] [--no-keep-active-plugins] [--replace='前=>後'] [--yes]
-wp sync push [--no-db] [--no-media] [--delete-media] [--themes=<名前,…|all>] [--plugins=<名前,…|all>] [--no-keep-active-plugins] [--replace='前=>後'] [--yes]
-wp sync restore [--remote] [--yes]            # 直前の取り込みの前に戻す
+wp sync pull [--no-db] [--no-media] [--delete-media] [--themes=<名前,…|all>] [--plugins=<名前,…|all>] [--no-keep-active-plugins] [--replace='前=>後'] [--remote=<名前>] [--yes]
+wp sync push [--no-db] [--no-media] [--delete-media] [--themes=<名前,…|all>] [--plugins=<名前,…|all>] [--no-keep-active-plugins] [--replace='前=>後'] [--remote=<名前>] [--yes]
+wp sync restore [--remote[=<名前>]] [--yes]   # 直前の取り込みの前に戻す
 ```
 
 ## しくみ

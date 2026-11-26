@@ -148,6 +148,9 @@ class WPS_DB {
 		}
 
 		$cols  = self::column( 'SHOW COLUMNS FROM ' . self::ident( $table ) );
+		// options テーブルの WP Sync の設定（接続キー・接続先）は送らない。受け取る側が古い版でも、相手の DB に入らないように。
+		$skip_col  = preg_match( '/options$/', $table ) ? array_search( 'option_name', $cols, true ) : false;
+		$skip_rows = array_merge( WPS_Settings::KEEP_OPTIONS, array( 'wps_backup' ) );
 		$keyed = 1 === count( $cursor['pk'] );
 		$index = $keyed ? array_search( $cursor['pk'][0], $cols, true ) : false;
 		$order = $cursor['pk'] ? ' ORDER BY ' . implode( ', ', array_map( array( __CLASS__, 'ident' ), $cursor['pk'] ) ) : '';
@@ -170,13 +173,16 @@ class WPS_DB {
 			$count   = 0;
 			$stopped = false;
 			while ( $row = mysqli_fetch_row( $result ) ) {
-				$rows[] = $row;
 				++$count;
-				foreach ( $row as $value ) {
-					$bytes += null === $value ? 4 : strlen( $value );
-				}
 				if ( $keyed && false !== $index ) {
 					$cursor['last'] = $row[ $index ];
+				}
+				if ( false !== $skip_col && in_array( $row[ $skip_col ], $skip_rows, true ) ) {
+					continue;
+				}
+				$rows[] = $row;
+				foreach ( $row as $value ) {
+					$bytes += null === $value ? 4 : strlen( $value );
 				}
 				if ( $bytes >= $max_bytes ) {
 					$stopped = true;

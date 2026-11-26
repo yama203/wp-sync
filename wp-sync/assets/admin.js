@@ -318,7 +318,7 @@
 	}
 
 	function load() {
-		return request( 'info' )
+		return request( 'info', { remote: wpsAdmin.remote } )
 			.then( function ( data ) {
 				info = data;
 				render();
@@ -467,6 +467,7 @@
 		jobId = null;
 
 		request( 'start', {
+			remote: wpsAdmin.remote,
 			direction: direction(),
 			db: db ? '1' : '0',
 			media: media ? '1' : '0',
@@ -488,7 +489,7 @@
 			return;
 		}
 		setRunning( true );
-		request( 'restore', { target: target } )
+		request( 'restore', { target: target, remote: wpsAdmin.remote } )
 			.then( function ( result ) {
 				setRunning( false );
 				window.alert( name + 'の DB を戻しました（' + result.tables + ' 個のテーブル）。' );
@@ -572,9 +573,10 @@
 		var connect = $( 'wps-connect-button' );
 		connect.addEventListener( 'click', function () {
 			connect.disabled = true;
-			request( 'connect', { key: $( 'wps-key' ).value, url: $( 'wps-url' ).value } )
+			request( 'connect', { key: $( 'wps-key' ).value, url: $( 'wps-url' ).value, name: $( 'wps-name' ).value } )
 				.then( function () {
-					window.location.reload();
+					// 足した接続先を使うので、同期のタブを開き直す。
+					window.location.href = window.location.href.replace( /#.*$/, '' ).replace( /([?&])tab=[^&]*&?/, '$1' ).replace( /[?&]$/, '' );
 				} )
 				.catch( function ( err ) {
 					connect.disabled = false;

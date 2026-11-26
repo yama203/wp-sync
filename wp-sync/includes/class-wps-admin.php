@@ -16,6 +16,8 @@ class WPS_Admin {
 		add_action( 'admin_post_wps_permissions', array( __CLASS__, 'save_permissions' ) );
 		add_action( 'admin_post_wps_regenerate', array( __CLASS__, 'regenerate' ) );
 		add_action( 'admin_post_wps_disconnect', array( __CLASS__, 'disconnect' ) );
+		add_action( 'admin_post_wps_use_remote', array( __CLASS__, 'use_remote' ) );
+		add_action( 'admin_post_wps_rename_remote', array( __CLASS__, 'rename_remote' ) );
 		foreach ( array( 'connect', 'info', 'start', 'step', 'restore', 'export', 'upload', 'import', 'confirm', 'file_step' ) as $action ) {
 			add_action( 'wp_ajax_wps_' . $action, array( __CLASS__, 'ajax_' . $action ) );
 		}
@@ -50,6 +52,8 @@ class WPS_Admin {
 				'ajax'      => admin_url( 'admin-ajax.php' ),
 				'nonce'     => wp_create_nonce( 'wps_ajax' ),
 				'connected' => (bool) WPS_Settings::remote(),
+				// この画面を開いたときの接続先。別のタブで切り替えても、この画面の操作はこの接続先に向ける。
+				'remote'    => WPS_Settings::remote() ? WPS_Settings::remote()['id'] : '',
 				'login'     => wp_login_url( self::url() ),
 				'version'   => WPS_VERSION,
 				// アップロードを分けて送る大きさ（このサイトの upload_max_filesize・post_max_size に収まるように）。
@@ -80,10 +84,38 @@ class WPS_Admin {
 		exit;
 	}
 
+	/** 接続先を消す。 */
 	public static function disconnect() {
 		self::check_post( 'wps_disconnect' );
-		WPS_Settings::save_remote( null );
-		wp_safe_redirect( self::url( array( 'wps_notice' => 'disconnected' ) ) );
+		try {
+			WPS_Settings::delete_remote( (string) self::post( 'remote' ) );
+		} catch ( Exception $e ) {
+			wp_die( esc_html( $e->getMessage() ) );
+		}
+		wp_safe_redirect( self::url( array( 'wps_notice' => 'disconnected', 'tab' => 'settings' ) ) );
+		exit;
+	}
+
+	/** 同期に使う接続先を切り替える。 */
+	public static function use_remote() {
+		self::check_post( 'wps_use_remote' );
+		try {
+			WPS_Settings::use_remote( (string) self::post( 'remote' ) );
+		} catch ( Exception $e ) {
+			wp_die( esc_html( $e->getMessage() ) );
+		}
+		wp_safe_redirect( self::url() );
+		exit;
+	}
+
+	public static function rename_remote() {
+		self::check_post( 'wps_rename_remote' );
+		try {
+			WPS_Settings::rename_remote( (string) self::post( 'remote' ), (string) self::post( 'name' ) );
+		} catch ( Exception $e ) {
+			wp_die( esc_html( $e->getMessage() ), '', array( 'back_link' => true ) );
+		}
+		wp_safe_redirect( self::url( array( 'wps_notice' => 'renamed', 'tab' => 'settings' ) ) );
 		exit;
 	}
 
@@ -121,13 +153,7 @@ class WPS_Admin {
 				}
 				$endpoint = new WPS_Remote_Endpoint( $url, $parsed['secret'] );
 				$info     = $endpoint->call( 'info' );
-				WPS_Settings::save_remote(
-					array(
-						'url'    => $url,
-						'secret' => $parsed['secret'],
-						'home'   => $info['home'],
-					)
-				);
+				WPS_Settings::add_remote( (string) self::post( 'name' ), $url, $parsed['secret'], $info['home'] );
 				return self::info_payload( $info );
 			}
 		);
@@ -136,7 +162,7 @@ class WPS_Admin {
 	public static function ajax_info() {
 		self::ajax_run(
 			function () {
-				return self::info_payload( WPS_Endpoint::remote()->call( 'info' ) );
+				return self::info_payload( WPS_Endpoint::remote( self::post( 'remote' ) ? (string) self::post( 'remote' ) : null )->call( 'info' ) );
 			}
 		);
 	}
@@ -212,6 +238,7 @@ class WPS_Admin {
 				$code  = json_decode( (string) self::post( 'code', '{}' ), true );
 				return WPS_Job::start(
 					array(
+						'remote'       => (string) self::post( 'remote' ),
 						'direction'    => self::post( 'direction' ),
 						'db'           => '1' === self::post( 'db' ),
 						'media'        => '1' === self::post( 'media' ),
@@ -238,7 +265,7 @@ class WPS_Admin {
 		self::ajax_run(
 			function () {
 				if ( 'remote' === self::post( 'target' ) ) {
-					return WPS_Endpoint::remote()->call( 'restore' );
+					return WPS_Endpoint::remote( self::post( 'remote' ) ? (string) self::post( 'remote' ) : null )->call( 'restore' );
 				}
 				return WPS_DB::restore();
 			}
@@ -395,16 +422,45 @@ class WPS_Admin {
 		<?php
 	}
 
+	/**
+	 * 接続先を足すフォーム（はじめての接続と、2 件目からの追加で使う）。
+	 */
+	private static function render_connect_form( $first ) {
+		?>
+		<ol class="wps-steps">
+			<li>接続先のサイトに WP Sync を入れ、「ツール → WP Sync → このサイトの設定」（マルチサイトでは「ネットワーク管理 → 設定 → WP Sync」）で接続キーをコピーします。</li>
+			<li>下に貼り付けて「<?php echo $first ? '接続する' : '接続先を足す'; ?>」を押します。</li>
+		</ol>
+		<textarea id="wps-key" class="large-text code wps-key" rows="3" placeholder="wps1:..."></textarea>
+		<p class="wps-field">
+			<label for="wps-name">名前</label>
+			<input type="text" id="wps-name" class="regular-text" placeholder="例：本番、ステージング（空なら相手のホスト名）">
+		</p>
+		<details class="wps-details">
+			<summary>接続する URL を変える（任意）</summary>
+			<div class="wps-details-body">
+				<p class="description">接続キーに入っている URL とは別の URL でつなぐときだけ入れます（例：Docker の中から別のローカル環境につなぐときの <code>http://host.docker.internal:10899</code>）。</p>
+				<input type="url" id="wps-url" class="regular-text code" placeholder="https://example.com">
+			</div>
+		</details>
+		<div class="wps-actions">
+			<button type="button" class="button button-primary button-large" id="wps-connect-button"><?php echo $first ? '接続する' : '接続先を足す'; ?></button>
+		</div>
+		<?php
+	}
+
 	public static function render() {
 		$notice  = isset( $_GET['wps_notice'] ) ? sanitize_key( $_GET['wps_notice'] ) : ''; // phpcs:ignore
 		$tab     = isset( $_GET['tab'] ) && in_array( $_GET['tab'], array( 'settings', 'file' ), true ) ? sanitize_key( $_GET['tab'] ) : 'sync'; // phpcs:ignore
 		$notices = array(
 			'saved'        => '許可の設定を保存しました。',
 			'regenerated'  => '接続キーを作り直しました。接続先に新しいキーを貼り直してください。',
-			'disconnected' => '接続を解除しました。',
+			'disconnected' => '接続先を消しました。',
+			'renamed'      => '接続先の名前を変えました。',
 		);
-		$remote = WPS_Settings::remote();
-		$post   = esc_url( admin_url( 'admin-post.php' ) );
+		$remote  = WPS_Settings::remote();
+		$remotes = WPS_Settings::remotes();
+		$post    = esc_url( admin_url( 'admin-post.php' ) );
 		?>
 		<div class="wrap wps">
 			<div class="wps-header">
@@ -430,24 +486,26 @@ class WPS_Admin {
 				<?php if ( ! $remote ) : ?>
 					<section class="wps-card" id="wps-connect">
 						<h2 class="wps-card-title">接続先につなぐ</h2>
-						<ol class="wps-steps">
-							<li>接続先のサイトに WP Sync を入れ、「ツール → WP Sync → このサイトの設定」（マルチサイトでは「ネットワーク管理 → 設定 → WP Sync」）で接続キーをコピーします。</li>
-							<li>下に貼り付けて「接続する」を押します。</li>
-						</ol>
-						<textarea id="wps-key" class="large-text code wps-key" rows="3" placeholder="wps1:..."></textarea>
-						<details class="wps-details">
-							<summary>接続する URL を変える（任意）</summary>
-							<div class="wps-details-body">
-								<p class="description">接続キーに入っている URL とは別の URL でつなぐときだけ入れます（例：Docker の中から別のローカル環境につなぐときの <code>http://host.docker.internal:10899</code>）。</p>
-								<input type="url" id="wps-url" class="regular-text code" placeholder="https://example.com">
-							</div>
-						</details>
-						<div class="wps-actions">
-							<button type="button" class="button button-primary button-large" id="wps-connect-button">接続する</button>
-						</div>
+						<?php self::render_connect_form( true ); ?>
 					</section>
 				<?php else : ?>
 					<section class="wps-card">
+						<form class="wps-remote-bar" method="post" action="<?php echo $post; // phpcs:ignore ?>">
+							<?php wp_nonce_field( 'wps_use_remote' ); ?>
+							<input type="hidden" name="action" value="wps_use_remote">
+							<label for="wps-remote-select">接続先</label>
+							<?php if ( count( $remotes ) > 1 ) : ?>
+								<select id="wps-remote-select" name="remote" onchange="this.form.submit()">
+									<?php foreach ( $remotes as $item ) : ?>
+										<option value="<?php echo esc_attr( $item['id'] ); ?>" <?php selected( $item['id'], $remote['id'] ); ?>><?php echo esc_html( $item['name'] . '（' . $item['home'] . '）' ); ?></option>
+									<?php endforeach; ?>
+								</select>
+								<noscript><button type="submit" class="button">切り替える</button></noscript>
+							<?php else : ?>
+								<strong><?php echo esc_html( $remote['name'] ); ?></strong>
+							<?php endif; ?>
+							<a href="<?php echo esc_url( self::url( array( 'tab' => 'settings' ) ) . '#wps-remotes' ); ?>" class="wps-remote-manage">接続先を足す・管理する</a>
+						</form>
 						<div class="wps-direction" role="radiogroup" aria-label="同期の向き">
 							<label class="wps-seg">
 								<input type="radio" name="wps-direction" value="pull" checked>
@@ -470,7 +528,7 @@ class WPS_Admin {
 							<div class="wps-flow" aria-hidden="true"><span class="dashicons dashicons-arrow-left-alt"></span></div>
 							<div class="wps-site" id="wps-site-remote">
 								<span class="wps-role"></span>
-								<span class="wps-site-kind">接続先</span>
+								<span class="wps-site-kind">接続先「<?php echo esc_html( $remote['name'] ); ?>」</span>
 								<strong class="wps-site-name">読み込み中…</strong>
 								<span class="wps-site-url"><?php echo esc_html( $remote['home'] ); ?></span>
 								<span class="wps-site-meta"></span>
@@ -610,17 +668,48 @@ class WPS_Admin {
 				</section>
 
 				<section class="wps-card wps-card-quiet">
-					<h2 class="wps-card-title">接続の管理</h2>
-					<?php if ( $remote ) : ?>
-						<div class="wps-manage-row">
-							<span>接続先: <strong><?php echo esc_html( $remote['home'] ); ?></strong><?php echo $remote['url'] !== $remote['home'] ? '（接続 URL: ' . esc_html( $remote['url'] ) . '）' : ''; ?></span>
-							<form method="post" action="<?php echo $post; // phpcs:ignore ?>">
-								<?php wp_nonce_field( 'wps_disconnect' ); ?>
-								<input type="hidden" name="action" value="wps_disconnect">
-								<button type="submit" class="button">接続を解除する</button>
-							</form>
-						</div>
+					<h2 class="wps-card-title" id="wps-remotes">接続先</h2>
+					<?php if ( $remotes ) : ?>
+						<p class="description">同期の画面で、どの接続先と pull / push するかを選べます（WP Migrate の「接続先のプロファイル」と同じ）。</p>
+						<ul class="wps-remote-list">
+							<?php foreach ( $remotes as $item ) : ?>
+								<li class="wps-remote-item">
+									<div class="wps-remote-info">
+										<strong><?php echo esc_html( $item['name'] ); ?></strong>
+										<?php if ( $remote && $item['id'] === $remote['id'] ) : ?>
+											<span class="wps-tag">使用中</span>
+										<?php endif; ?>
+										<span class="wps-remote-url"><?php echo esc_html( $item['home'] ); ?><?php echo $item['url'] !== $item['home'] ? '（接続 URL: ' . esc_html( $item['url'] ) . '）' : ''; ?></span>
+									</div>
+									<form method="post" action="<?php echo $post; // phpcs:ignore ?>" class="wps-remote-rename">
+										<?php wp_nonce_field( 'wps_rename_remote' ); ?>
+										<input type="hidden" name="action" value="wps_rename_remote">
+										<input type="hidden" name="remote" value="<?php echo esc_attr( $item['id'] ); ?>">
+										<input type="text" name="name" value="<?php echo esc_attr( $item['name'] ); ?>" aria-label="名前" required>
+										<button type="submit" class="button">名前を変える</button>
+									</form>
+									<form method="post" action="<?php echo $post; // phpcs:ignore ?>" onsubmit="return confirm('接続先「<?php echo esc_js( $item['name'] ); ?>」を消します。もう一度つなぐには接続キーを貼り直します。よろしいですか？');">
+										<?php wp_nonce_field( 'wps_disconnect' ); ?>
+										<input type="hidden" name="action" value="wps_disconnect">
+										<input type="hidden" name="remote" value="<?php echo esc_attr( $item['id'] ); ?>">
+										<button type="submit" class="button-link button-link-delete">消す</button>
+									</form>
+								</li>
+							<?php endforeach; ?>
+						</ul>
+						<details class="wps-details wps-add-remote">
+							<summary>接続先を足す</summary>
+							<div class="wps-details-body">
+								<?php self::render_connect_form( false ); ?>
+							</div>
+						</details>
+					<?php else : ?>
+						<p class="description">まだ接続先がありません。「同期」のタブで接続キーを貼り付けてつなぎます。</p>
 					<?php endif; ?>
+				</section>
+
+				<section class="wps-card wps-card-quiet">
+					<h2 class="wps-card-title">接続キーの作り直し</h2>
 					<div class="wps-manage-row">
 						<span>接続キーを作り直すと、今のキーでつないでいる相手はつながらなくなります。</span>
 						<form method="post" action="<?php echo $post; // phpcs:ignore ?>" onsubmit="return confirm('接続キーを作り直すと、今のキーではつなげなくなります。よろしいですか？');">

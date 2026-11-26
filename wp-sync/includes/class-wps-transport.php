@@ -57,10 +57,13 @@ abstract class WPS_Endpoint {
 		return new WPS_Local_Endpoint();
 	}
 
-	public static function remote() {
-		$remote = WPS_Settings::remote();
+	/**
+	 * @param string|null $id 接続先の ID か名前。null なら今使っている接続先。
+	 */
+	public static function remote( $id = null ) {
+		$remote = WPS_Settings::remote( $id );
 		if ( ! $remote ) {
-			throw new Exception( '接続先が設定されていません。' );
+			throw new Exception( null === $id || '' === $id ? '接続先が設定されていません。' : '接続先が見つかりません: ' . $id );
 		}
 		return new WPS_Remote_Endpoint( $remote['url'], $remote['secret'] );
 	}

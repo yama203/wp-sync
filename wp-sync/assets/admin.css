@@ -800,3 +800,79 @@
 		margin-bottom: 6px;
 	}
 }
+
+/* ---------- 接続先（0.6.0） ---------- */
+
+.wps-remote-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+	margin: -4px 0 16px;
+	padding-bottom: 14px;
+	border-bottom: 1px solid #f0f0f1;
+}
+
+.wps-remote-bar label {
+	color: var(--wps-muted);
+}
+
+.wps-remote-bar select {
+	max-width: 100%;
+}
+
+.wps-remote-manage {
+	margin-left: auto;
+}
+
+.wps-remote-list {
+	margin: 12px 0 0;
+	border: 1px solid var(--wps-border);
+	border-radius: var(--wps-radius);
+}
+
+.wps-remote-item {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+	margin: 0;
+	padding: 12px 14px;
+}
+
+.wps-remote-item + .wps-remote-item {
+	border-top: 1px solid #f0f0f1;
+}
+
+.wps-remote-info {
+	flex: 1 1 240px;
+	min-width: 0;
+}
+
+.wps-remote-url {
+	display: block;
+	color: var(--wps-muted);
+	font-size: 13px;
+	word-break: break-all;
+}
+
+.wps-remote-rename {
+	display: flex;
+	gap: 6px;
+}
+
+.wps-remote-rename input[type="text"] {
+	width: 10em;
+}
+
+.wps-add-remote {
+	margin-top: 12px;
+}
+
+.wps-field {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 10px;
+	margin: 10px 0 0;
+}

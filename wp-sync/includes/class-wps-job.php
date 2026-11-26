@@ -265,7 +265,12 @@ class WPS_Job {
 		}
 
 		WPS_Settings::assert_main_site();
-		$remote = WPS_Endpoint::remote();
+		// 相手は始めるときに決め、同期の状態に覚えておく（途中で画面の接続先を切り替えても、動いている同期の相手は変わらない）。
+		$preset = WPS_Settings::remote( isset( $opts['remote'] ) ? $opts['remote'] : null );
+		if ( ! $preset ) {
+			throw new Exception( isset( $opts['remote'] ) && '' !== (string) $opts['remote'] ? '接続先が見つかりません: ' . $opts['remote'] : '接続先が設定されていません。' );
+		}
+		$remote = WPS_Endpoint::remote( $preset['id'] );
 		$rinfo  = $remote->call( 'info' );
 		$linfo  = WPS_Server::info();
 
@@ -356,6 +361,8 @@ class WPS_Job {
 			array(
 				'id'          => wp_generate_password( 20, false, false ),
 				'direction'   => $direction,
+				'remote'      => $preset['id'],
+				'remote_name' => $preset['name'],
 				'started'     => time(),
 				'src_home'    => $src['home'],
 				'keep_active' => ! empty( $opts['keep_active_plugins'] ),
@@ -391,7 +398,7 @@ class WPS_Job {
 				'errors'      => array(),
 			)
 		);
-		$job->log( sprintf( '%s を開始しました（%s → %s）。', strtoupper( $direction ), $src['home'], $dst['home'] ) );
+		$job->log( sprintf( '%s を開始しました（接続先「%s」、%s → %s）。', strtoupper( $direction ), $preset['name'], $src['home'], $dst['home'] ) );
 		$job->save();
 		return $job->status();
 	}
@@ -403,7 +410,7 @@ class WPS_Job {
 
 	public function step() {
 		$deadline = microtime( true ) + self::STEP_SECONDS;
-		$remote   = WPS_Endpoint::remote();
+		$remote   = WPS_Endpoint::remote( isset( $this->data['remote'] ) ? $this->data['remote'] : null );
 		$local    = WPS_Endpoint::local();
 		$pull     = 'pull' === $this->data['direction'];
 		$src      = $pull ? $remote : $local;
